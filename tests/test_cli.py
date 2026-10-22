@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 
 from temper import __version__
 from temper.cli import app
-from tests.support import EXAMPLE
+from tests.support import EXAMPLE, local_api
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -170,6 +170,22 @@ def test_a_run_that_cannot_begin_keeps_nothing(
     assert "run stopped before it began, so nothing was kept: no Anthropic credentials found" in (
         result.output
     )
+    assert not out.exists()
+
+
+def test_an_interrupt_before_the_run_begins_keeps_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def interrupted(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("temper.cli.plan_run", interrupted)
+    out = tmp_path / "runs"
+
+    result = runner.invoke(app, ["run", str(EXAMPLE), "--out", str(out)])
+
+    assert result.exit_code == 130
+    assert "interrupted before the run began, so nothing was kept" in result.output
     assert not out.exists()
 
 
@@ -341,6 +357,30 @@ def test_the_api_key_never_reaches_any_kept_file(
     }
     for kept in folder.iterdir():
         assert SECRET not in kept.read_text(encoding="utf-8"), kept.name
+
+
+def test_a_paid_run_answers_every_trial_on_the_first_attempt(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The command runs its free preflight and its trials in one event loop.
+
+    Over real connections, a second loop would find the client's pooled
+    connections bound to the first, and every trial's first attempt would
+    fail and retry. A mock transport can't see that; a local socket can.
+    """
+    path = claude_suite(files, cases=3)
+    out = files.root / "runs"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    with local_api() as base_url:
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", base_url)
+
+        result = runner.invoke(app, ["run", str(path), "--out", str(out), "--budget", "1"])
+
+    assert result.exit_code == 0, result.output
+    [folder] = out.iterdir()
+    lines = (folder / "results.jsonl").read_text(encoding="utf-8").splitlines()
+    attempts = [json.loads(line)["attempts"] for line in lines]
+    assert attempts == [1, 1, 1]
 
 
 def claude_suite(files: Files, *, model: str = "claude-sonnet-5-5", cases: int = 1) -> Path:

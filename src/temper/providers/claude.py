@@ -46,7 +46,11 @@ _NEEDS_MODEL = "the claude provider needs target.model, for example claude-sonne
 
 
 class ClaudeProvider:
-    """Asks the model named in each request, through the Anthropic API."""
+    """Asks the model named in each request, through the Anthropic API.
+
+    The client's connections belong to the event loop that first used them,
+    so one provider serves one loop: plan, run, and close in the same one.
+    """
 
     charges = True
 
@@ -106,6 +110,10 @@ class ClaudeProvider:
         except anthropic.APIError as error:
             raise ProviderError(f"couldn't count tokens: {error}") from error
         return count.input_tokens
+
+    async def aclose(self) -> None:
+        """Close the client's connections."""
+        await self._client.close()
 
     def _require_credentials(self) -> None:
         """Refuse to call the API with no credentials.

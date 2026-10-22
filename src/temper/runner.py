@@ -14,6 +14,7 @@ import platform
 import random
 import secrets
 import time
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import version
@@ -71,8 +72,9 @@ async def run_suite(
 async def resume_run(path: Path, provider: Provider | None = None) -> Run:
     """Pick up a kept run, answering only the (case, trial) slots that still have no answer.
 
-    The suite is read from the file the run was started from, and the provider
-    from its options, unless one is given.
+    The suite is read from the file the run was started from. The provider is
+    built from the run's options and closed afterwards, unless one is given,
+    which is then left open for its owner.
 
     Raises:
         RunError: the folder isn't a run, or its suite file has changed since.
@@ -81,8 +83,14 @@ async def resume_run(path: Path, provider: Provider | None = None) -> Run:
     """
     suite, folder = reopen_run(path)
     options = folder.manifest.options
-    provider = provider or provider_for(suite, options)
-    plan = await plan_run(suite, provider, options)
+    if provider is not None:
+        return await _resume(suite, provider, folder)
+    async with aclosing(provider_for(suite, options)) as built:
+        return await _resume(suite, built, folder)
+
+
+async def _resume(suite: Suite, provider: Provider, folder: RunFolder) -> Run:
+    plan = await plan_run(suite, provider, folder.manifest.options)
     folder.resume()
     return await complete_run(suite, provider, folder, plan)
 

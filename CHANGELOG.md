@@ -2,6 +2,20 @@
 
 All notable changes to Temper. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] · 10.22.2026
+
+The first live run found a bug the tests couldn't see. The command ran its free preflight in one event loop and the trials in another, with one API client between them, whose pooled connections belonged to the first loop. Every trial's first attempt failed with a connection error, and the retry hid it.
+
+### Fixed
+
+- `temper run` and `temper resume` plan, run, and close the provider in one event loop, so a connection the preflight opened is still good when the trials need it.
+- Providers have an `aclose`, and the command closes the one it opened, so no connection is left open at exit.
+- The package reports its version again: v0.2.0 still said `0.1.0`.
+
+### Added
+
+- A regression test that stands up a local HTTP server speaking the API's shape, so real connections are exercised without the network.
+
 ## [0.2.0] · 10.22.2026
 
 Real runs, honest numbers: Claude answers the cases, and every attempt is written down for what it was.

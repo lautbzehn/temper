@@ -113,6 +113,9 @@ class ReplayProvider:
         recording = self._find(request)
         return recording.completion.usage.input_tokens if recording else 0
 
+    async def aclose(self) -> None:
+        """Nothing is held open."""
+
     def _find(self, request: Request) -> Recording | None:
         return self._recordings.get((request.case_id, request.trial))
 

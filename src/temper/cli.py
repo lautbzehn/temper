@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import aclosing, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
@@ -25,11 +25,10 @@ from temper.runner import (
 from temper.summary import plural, render_estimate, render_run
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from temper.providers import Provider
-    from temper.results import RunFolder
-    from temper.runner import Plan
+    from temper.results import Run, RunFolder
     from temper.suite import Suite
 
 app = typer.Typer(
@@ -120,13 +119,17 @@ def run(
     with _plain_errors():
         loaded = load_suite(suite)
         provider = provider_for(loaded, options)
-        if dry_run:
-            estimates = asyncio.run(estimate_suite(loaded, provider, options))
-            render_estimate(loaded, estimates, options, out, charges=provider.charges)
-            return
-    plan = _planned(loaded, provider, options, "run stopped before it began, so nothing was kept")
-    _prepare(out_dir)
-    _finish(loaded, provider, start_run(loaded, provider, out=out_dir, options=options), plan)
+    if dry_run:
+        _estimate(loaded, provider, options)
+        return
+
+    def fresh() -> RunFolder:
+        _prepare(out_dir)
+        return start_run(loaded, provider, out=out_dir, options=options)
+
+    _drive(
+        loaded, provider, options, fresh, before="run stopped before it began, so nothing was kept"
+    )
 
 
 @app.command()
@@ -135,9 +138,12 @@ def resume(folder: RunDir) -> None:
     with _plain_errors():
         loaded, opened = reopen_run(folder)
         provider = provider_for(loaded, opened.manifest.options)
-    plan = _planned(loaded, provider, opened.manifest.options, "the run wasn't picked up")
-    opened.resume()
-    _finish(loaded, provider, opened, plan)
+
+    def picked_up() -> RunFolder:
+        opened.resume()
+        return opened
+
+    _drive(loaded, provider, opened.manifest.options, picked_up, before="the run wasn't picked up")
 
 
 @contextmanager
@@ -151,14 +157,6 @@ def _plain_errors() -> Iterator[None]:
         _fail(str(error))
 
 
-def _planned(suite: Suite, provider: Provider, options: RunOptions, otherwise: str) -> Plan:
-    """The run's plan, or a plain failure that opens with `otherwise`."""
-    try:
-        return asyncio.run(plan_run(suite, provider, options))
-    except ProviderError as error:
-        _fail(f"{otherwise}: {error}")
-
-
 def _prepare(out_dir: Path) -> None:
     """Make sure the run can be kept before spending time on it."""
     try:
@@ -167,25 +165,67 @@ def _prepare(out_dir: Path) -> None:
         _fail(f"can't keep runs in {str(out_dir)!r}: {error.strerror}")
 
 
-def _finish(suite: Suite, provider: Provider, folder: RunFolder, plan: Plan) -> None:
-    """Run what the folder still needs, print the summary, and exit with how it went."""
-    out.print(f"Keeping this run in {folder.path}", style="dim")
-    pick_up = f"Pick it up with: temper resume {folder.path}"
+def _estimate(suite: Suite, provider: Provider, options: RunOptions) -> None:
+    """Count every case's tokens and print what the run could cost, at most."""
+
+    async def counted() -> dict[str, int]:
+        async with aclosing(provider):
+            return await estimate_suite(suite, provider, options)
+
+    with _plain_errors():
+        estimates = asyncio.run(counted())
+    render_estimate(suite, estimates, options, out, charges=provider.charges)
+
+
+def _drive(
+    suite: Suite,
+    provider: Provider,
+    options: RunOptions,
+    folder_once_planned: Callable[[], RunFolder],
+    *,
+    before: str,
+) -> None:
+    """Plan the run, open its folder, and answer it, then print how it went and exit to match.
+
+    All of it happens in one event loop and closes the provider at the end, so
+    a connection the preflight opened is still good when the trials need it.
+    """
+    folder: RunFolder | None = None
+
+    async def driven() -> Run:
+        nonlocal folder
+        async with aclosing(provider):
+            plan = await plan_run(suite, provider, options)
+            folder = folder_once_planned()
+            out.print(f"Keeping this run in {folder.path}", style="dim")
+            return await complete_run(suite, provider, folder, plan)
+
     try:
-        finished = asyncio.run(complete_run(suite, provider, folder, plan))
+        finished = asyncio.run(driven())
+    except ProviderError as error:
+        _fail(f"{before}: {error}")
     except KeyboardInterrupt:
-        _fail(f"interrupted; what finished is kept. {pick_up}", code=INTERRUPTED)
+        _fail(_interrupted(folder), code=INTERRUPTED)
     except Exception:
-        err.print(
-            f"Stopped by an unexpected error. What finished is kept. {pick_up}", style="yellow"
-        )
+        if folder is not None:
+            err.print(f"Stopped by an unexpected error. What finished is kept. {_pick_up(folder)}")
         raise
     render_run(finished, out)
-    if finished.missing:
+    if finished.missing and folder is not None:
         err.print(
             f"Try the unanswered trials again with: temper resume {folder.path}", style="yellow"
         )
         raise typer.Exit(INCOMPLETE)
+
+
+def _interrupted(folder: RunFolder | None) -> str:
+    if folder is None:
+        return "interrupted before the run began, so nothing was kept"
+    return f"interrupted; what finished is kept. {_pick_up(folder)}"
+
+
+def _pick_up(folder: RunFolder) -> str:
+    return f"Pick it up with: temper resume {folder.path}"
 
 
 def _fail(*lines: str, code: int = 1) -> NoReturn:

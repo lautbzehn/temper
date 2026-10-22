@@ -74,6 +74,9 @@ class FakeProvider:
         """Scripted replies are free."""
         return 0
 
+    async def aclose(self) -> None:
+        """Nothing is held open."""
+
 
 def build(target: Target, base_dir: Path) -> FakeProvider:
     """A fake provider from a suite's target, its replies file read relative to `base_dir`."""

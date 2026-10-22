@@ -16,3 +16,4 @@ The Anthropic SDK is helpful by default: it retries on its own, and it can be to
 - More code than letting the SDK retry, in exchange for a complete record of what happened.
 - A dry run reports the worst case honestly, which is usually well above what a run really costs.
 - A suite can be validated and replayed with no credentials at all; only a paid run needs them.
+- A provider's connections belong to one event loop, so a command plans, runs, and closes its provider in the same one. The first live run found this the hard way: a second loop made every trial's first attempt fail, and the retries hid it.

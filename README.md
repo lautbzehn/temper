@@ -124,21 +124,26 @@ Everything the command line does is a function you can import:
 
 ```python
 import asyncio
+from contextlib import aclosing
 from pathlib import Path
 
 import temper
 
-suite = temper.load_suite("examples/dunder-mifflin/suite.yaml")
-provider = temper.build_provider(suite.target, suite.folder)
-options = temper.RunOptions(trials=5, budget_usd=1.0)
-run = asyncio.run(temper.run_suite(suite, provider, out=Path("runs"), options=options))
 
+async def main() -> temper.Run:
+    suite = temper.load_suite("examples/dunder-mifflin/suite.yaml")
+    options = temper.RunOptions(trials=5, budget_usd=1.0)
+    async with aclosing(temper.build_provider(suite.target, suite.folder)) as provider:
+        return await temper.run_suite(suite, provider, out=Path("runs"), options=options)
+
+
+run = asyncio.run(main())
 print(f"{run.trials_passed} of {len(run.scored)} scored trials passed")
 for failure in run.failures:
     print(f"{failure.case_id} trial {failure.trial} failed: {failure.reason}")
 ```
 
-`suite.folder` is the suite file's folder, where its relative paths are read from. A run never raises over a trial that couldn't be answered; it comes back with the failure written down.
+`suite.folder` is the suite file's folder, where its relative paths are read from. A provider's connections belong to one event loop, so build it, run with it, and close it in the same `async` function, as above. A run never raises over a trial that couldn't be answered; it comes back with the failure written down.
 
 ## Reading the code
 
