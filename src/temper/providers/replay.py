@@ -1,8 +1,8 @@
-"""The replay provider: answers recorded from a real run, played back with no network and no cost.
+"""The replay provider: answers from a recording, so a run costs nothing and needs no network.
 
-Every live run writes a `recording.jsonl` beside its results. A replay points
-at one of those files and refuses to answer a case whose prompt has changed
-since, so a replayed score always describes the prompt that was actually run.
+A recording is only honest while it describes what would actually be sent, so
+a request whose prompt, model, options, or shape has changed since is refused
+rather than answered with a stale completion.
 """
 
 from __future__ import annotations
@@ -10,114 +10,125 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 
-from temper.errors import ProviderError, UnreadableFileError
-from temper.files import read_text
+from temper import jsonl
+from temper.errors import BadLineError, ProviderError, UnreadableFileError
 from temper.providers.base import Completion, Request
 from temper.suite import Closed
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
     from temper.suite import Target
 
+# What a recording is of: the case, the trial, and the check when it holds a verdict.
+Key = tuple[str, int, int | None]
+
 
 class ReplaySettings(Closed):
-    """Options for the replay provider: the recording to play back."""
+    """Options for the replay provider: the recording to answer from."""
 
     recording: Path
 
 
 class Recording(BaseModel):
-    """One recorded answer: which trial, a fingerprint of what was sent, and the completion."""
+    """One completion as it came back, and a fingerprint of the request that got it."""
 
     model_config = ConfigDict(frozen=True)
 
     case_id: str
     trial: int
+    check: int | None = None
     fingerprint: str
     completion: Completion
 
     @classmethod
     def of(cls, request: Request, completion: Completion) -> Self:
-        """The recording of one answered request."""
+        """The recording of `completion` answering `request`."""
         return cls(
             case_id=request.case_id,
             trial=request.trial,
+            check=request.check,
             fingerprint=request.fingerprint,
             completion=completion,
         )
 
-
-Slot = tuple[str, int]
+    @property
+    def key(self) -> Key:
+        """What the recording is of."""
+        return (self.case_id, self.trial, self.check)
 
 
 class ReplayProvider:
-    """Answers each (case, trial) with what was recorded for it."""
+    """Answers each request with what the same request got when it was recorded."""
 
     charges = False
 
-    def __init__(self, recordings: Mapping[Slot, Recording]) -> None:
-        self._recordings = recordings
+    def __init__(self, recordings: Iterable[Recording]) -> None:
+        self._recorded: Mapping[Key, Recording] = {record.key: record for record in recordings}
 
     @classmethod
     def from_file(cls, path: Path) -> Self:
-        """Read a `recording.jsonl` file, one recorded answer per line.
+        """Read a `recording.jsonl`, refusing one that records the same request twice.
 
         Raises:
-            ProviderError: the file can't be read, a line isn't a recorded answer,
-                or one trial is recorded twice.
+            ProviderError: the file can't be read, or isn't a recording.
         """
         try:
-            lines = read_text(path).splitlines()
+            recordings = list(jsonl.read(path, Recording))
         except UnreadableFileError as error:
             raise ProviderError(f"can't read recording {str(path)!r}: {error.reason}") from None
-
-        recordings: dict[Slot, Recording] = {}
-        for number, line in enumerate(lines, 1):
-            if not line.strip():
-                continue
-            try:
-                recording = Recording.model_validate_json(line)
-            except ValidationError:
-                raise ProviderError(
-                    f"line {number} of recording {str(path)!r} isn't a recorded answer"
-                ) from None
-            slot = (recording.case_id, recording.trial)
-            if slot in recordings:
-                raise ProviderError(
-                    f"recording {str(path)!r} answers case {slot[0]!r} trial {slot[1]} twice"
-                )
-            recordings[slot] = recording
+        except BadLineError as error:
+            raise ProviderError(
+                f"line {error.line} of recording {str(path)!r} isn't a recorded answer"
+            ) from None
+        seen: set[Key] = set()
+        for record in recordings:
+            if record.key in seen:
+                what, where = _describe(record.key)
+                raise ProviderError(f"{str(path)!r} {what}s {where} twice")
+            seen.add(record.key)
         return cls(recordings)
 
+    def recorded(self, request: Request, /) -> Completion | None:
+        """The completion recorded for this very request, if there is one."""
+        record = self._recorded.get(request.key)
+        if record is None or record.fingerprint != request.fingerprint:
+            return None
+        return record.completion
+
+    def has(self, request: Request, /) -> bool:
+        """Whether the recording holds an answer to this very request."""
+        return self.recorded(request) is not None
+
     async def complete(self, request: Request, /) -> Completion:
-        """The recorded answer for this trial, if it was recorded for the same prompt."""
-        recording = self._find(request)
-        if recording is None:
+        """The recorded completion, or a refusal when what's recorded isn't this request."""
+        record = self._recorded.get(request.key)
+        what, where = _describe(request.key)
+        if record is None:
+            raise ProviderError(f"no recorded {what} for {where}")
+        if record.fingerprint != request.fingerprint:
             raise ProviderError(
-                f"no recorded answer for case {request.case_id!r} trial {request.trial}; "
-                "run the suite live once to record one"
+                f"the recorded {what} for {where} was made for a different prompt, model, "
+                "options, or max_tokens; run the suite live to record it again"
             )
-        if recording.fingerprint != request.fingerprint:
-            raise ProviderError(
-                f"the recorded answer for case {request.case_id!r} trial {request.trial} "
-                "was made for a different prompt, model, options, or max_tokens; "
-                "run the suite live again to record it"
-            )
-        return recording.completion
+        return record.completion
 
     async def estimate(self, request: Request, /) -> int:
-        """The recorded answer's input tokens, or none when nothing was recorded."""
-        recording = self._find(request)
-        return recording.completion.usage.input_tokens if recording else 0
+        """The input tokens the recorded answer used, or none when nothing is recorded."""
+        record = self._recorded.get(request.key)
+        return record.completion.usage.input_tokens if record is not None else 0
 
     async def aclose(self) -> None:
         """Nothing is held open."""
 
-    def _find(self, request: Request) -> Recording | None:
-        return self._recordings.get((request.case_id, request.trial))
+
+def _describe(key: Key) -> tuple[str, str]:
+    """What a key is for, as (what, where): `("answer", "case 'x' trial 2")`."""
+    case_id, trial, check = key
+    where = f"case {case_id!r} trial {trial}"
+    return ("answer", where) if check is None else ("verdict", f"check {check} of {where}")
 
 
 def build(target: Target, base_dir: Path) -> ReplayProvider:

@@ -12,9 +12,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from temper.graders import Answer
+from temper.planning import Estimates, Plan, Providers
 from temper.providers import Completion, Request, Usage
 from temper.runner import run_suite
-from temper.suite import Suite
+from temper.suite import Message, Suite
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -52,17 +54,24 @@ def make_suite(
     name: str = "test",
     model: str | None = "fake-1",
     options: dict[str, Any] | None = None,
+    judge: dict[str, Any] | None = None,
 ) -> Suite:
-    """A suite with a fake target and the given cases."""
+    """A suite with a fake target and the given cases, judged by `judge-1` unless told otherwise."""
     return Suite.model_validate(
         {
             "schema": 1,
             "name": name,
             "target": {"provider": "fake", "model": model, "options": options or {}},
+            "judge": judge or {"model": "judge-1"},
             "trials": trials,
             "cases": list(cases),
         }
     )
+
+
+def judged(case_id: str, property_: str = "is polite") -> dict[str, Any]:
+    """A case with one judge check."""
+    return case(case_id, {"type": "judge", "property": property_})
 
 
 def answer(
@@ -76,9 +85,43 @@ def answer(
     return Completion(text=text, model=model, status=status, usage=usage or Usage())
 
 
-def run(suite: Suite, provider: Provider, out: Path, options: RunOptions | None = None) -> Run:
+def seen(text: str, *, latency_ms: float = 100.0, cost_usd: float | None = 0.001) -> Answer:
+    """An answer as a grader sees it."""
+    conversation = (Message(role="user", content="A question"),)
+    return Answer(text=text, conversation=conversation, latency_ms=latency_ms, cost_usd=cost_usd)
+
+
+def verdict(
+    *, passed: bool, reason: str = "because", model: str = "judge-1", usage: Usage | None = None
+) -> Completion:
+    """A judge's completion: a verdict as JSON."""
+    text = json.dumps({"reason": reason, "passed": passed})
+    return Completion(text=text, model=model, usage=usage or Usage())
+
+
+def providers(answers: Provider | Providers, judge: Provider | None = None) -> Providers:
+    """The providers as given, or a bare provider wrapped as the one that answers."""
+    if isinstance(answers, Providers):
+        return answers
+    return Providers(answers, judge)
+
+
+def plan(suite: Suite, answers: Provider | Providers, judge: Provider | None = None) -> Plan:
+    """A plan with nothing counted and no budget held."""
+    return Plan(suite, providers(answers, judge), Estimates(), None)
+
+
+def run(
+    suite: Suite,
+    answers: Provider | Providers,
+    out: Path,
+    options: RunOptions | None = None,
+    *,
+    judge: Provider | None = None,
+) -> Run:
     """Run a suite to completion under `out`."""
-    return asyncio.run(run_suite(suite, provider, out=out, options=options))
+    chosen = providers(answers, judge)
+    return asyncio.run(run_suite(suite, chosen, out=out, options=options))
 
 
 @dataclass
@@ -89,6 +132,8 @@ class Scripted:
     tokens: dict[str, int] = field(default_factory=dict)
     charges: bool = False
     calls: list[tuple[str, int]] = field(default_factory=list)
+    requests: list[Request] = field(default_factory=list)
+    estimated: list[Request] = field(default_factory=list)
     queues: dict[str, list[Completion | Exception]] = field(init=False)
 
     def __post_init__(self) -> None:
@@ -96,12 +141,14 @@ class Scripted:
 
     async def complete(self, request: Request, /) -> Completion:
         self.calls.append((request.case_id, request.trial))
+        self.requests.append(request)
         outcome = self.queues[request.case_id].pop(0)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
 
     async def estimate(self, request: Request, /) -> int:
+        self.estimated.append(request)
         return self.tokens.get(request.case_id, 0)
 
     async def aclose(self) -> None:

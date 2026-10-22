@@ -59,13 +59,19 @@ uv run mypy
 |---|---|
 | `src/temper/suite.py` | The suite format, schema version 1 (frozen against breaking changes) |
 | `src/temper/loading.py` | YAML to a validated suite, with every problem at its line |
-| `src/temper/graders.py` | Checks: validated models with a pure `grade` method |
+| `src/temper/graders.py` | Checks: validated models with a pure `grade`, and the `judge` check's settings |
+| `src/temper/checks.py` | Finding a check by name: the built-ins, the judge, and any a plugin adds |
+| `src/temper/judge.py` | The judge: its prompt with sealed tags, the verdict's JSON shape, and the grade read back from a completion |
+| `src/temper/plugins.py` | Checks other packages add, found through the `temper.graders` entry point group |
 | `src/temper/providers/` | Where answers come from: the `Provider` protocol (`base.py`), and the `claude`, `fake`, and `replay` providers |
 | `src/temper/pricing.py` | List prices, and what a `Usage` costs |
-| `src/temper/runner.py` | Async runs: retries, time limits, budget, served-model check, resume |
+| `src/temper/planning.py` | Before a run: who answers, counting every request, the worst case a budget holds |
+| `src/temper/runner.py` | Async runs: answers and verdicts through one pipe with retries, time limits, budget, served-model check, recordings first, resume |
 | `src/temper/results.py` | The run folder: `results.jsonl`, `errors.jsonl`, `recording.jsonl`, and `manifest.json` |
-| `src/temper/summary.py` | The terminal summary, and the dry-run estimate |
+| `src/temper/labels.py`, `labeling.py` | A person's labels on judged answers, and the blind session that collects them |
+| `src/temper/calibration.py` | The judge against the labels: agreement, Cohen's kappa, and every disagreement |
+| `src/temper/summary.py` | The terminal summary, the dry-run estimate, and the calibration report |
 | `src/temper/cli.py` | The `temper` command, a thin layer over the library |
 | `src/temper/errors.py` | Every error a person might see |
-| `src/temper/files.py` | Reading files as UTF-8, with one kind of error for every way that fails |
+| `src/temper/files.py`, `jsonl.py`, `wording.py` | Reading files as UTF-8, records one per line, and the plurals and dollars people read |
 | `docs/adr/` | Decision notes: the context, the decision, and what it costs |

@@ -19,8 +19,9 @@ from temper.suite import Closed
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from anthropic import Omit
+    from anthropic.types import JSONOutputFormatParam, MessageParam, OutputConfigParam
     from anthropic.types import Message as ApiMessage
-    from anthropic.types import MessageParam
     from anthropic.types import Usage as ApiUsage
 
     from temper.suite import Message, Target
@@ -66,14 +67,13 @@ class ClaudeProvider:
     async def complete(self, request: Request, /) -> Completion:
         """Ask the model once. Rate limits, outages, and network trouble count as transient."""
         self._require_credentials()
-        effort = self._settings.effort
         try:
             message = await self._client.messages.create(
                 model=_model(request),
                 max_tokens=request.max_tokens,
                 system=request.system if request.system is not None else omit,
                 messages=[_as_param(message) for message in request.messages],
-                output_config={"effort": effort} if effort is not None else omit,
+                output_config=_output_config(request, self._settings),
             )
         except anthropic.RateLimitError as error:
             raise TransientError(
@@ -140,6 +140,18 @@ def _model(request: Request) -> str:
     if request.model is None:
         raise ProviderError(_NEEDS_MODEL)
     return request.model
+
+
+def _output_config(request: Request, settings: ClaudeSettings) -> OutputConfigParam | Omit:
+    """How hard to think, and the JSON shape to answer in when the request names one."""
+    config: OutputConfigParam = {}
+    if settings.effort is not None:
+        config["effort"] = settings.effort
+    if request.json_schema is not None:
+        schema: dict[str, object] = dict(request.json_schema)
+        shape: JSONOutputFormatParam = {"type": "json_schema", "schema": schema}
+        config["format"] = shape
+    return config or omit
 
 
 def _as_param(message: Message) -> MessageParam:

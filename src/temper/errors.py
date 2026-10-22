@@ -48,6 +48,19 @@ class RunError(Exception):
     """A kept run that can't be used: its folder is incomplete, or its suite has changed."""
 
 
+class PluginError(Exception):
+    """A grader another package registered that can't be used, and which package to look at."""
+
+
+class BadLineError(Exception):
+    """A line in a file of records that isn't the record it should be: which file, which line."""
+
+    def __init__(self, path: Path, line: int) -> None:
+        self.path = path
+        self.line = line
+        super().__init__(f"line {line} of {str(path)!r} isn't a record Temper can read")
+
+
 class UnreadableFileError(Exception):
     """A file that couldn't be read as UTF-8 text, and why, in words a person can act on."""
 

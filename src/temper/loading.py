@@ -3,8 +3,8 @@
 The file is parsed once into both data and a map from each location in the
 document to where it starts, so any problem found later, by Pydantic or by
 Temper's own checks, can point at a line and column. The suite's shape, its
-checks, and its target are each checked on their own, so a typo in one place
-never hides a mistake in another.
+checks, its judge, and its target are each checked on their own, so a typo in
+one place never hides a mistake in another.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Final
 import yaml
 from pydantic import BaseModel, ValidationError
 
+from temper.checks import build_check, check_kinds
 from temper.errors import (
     Problem,
     ProviderError,
@@ -25,9 +26,8 @@ from temper.errors import (
     closest,
 )
 from temper.files import read_text
-from temper.graders import GRADERS, build_grader
-from temper.providers import SETTINGS, build_provider
-from temper.suite import Case, Check, Message, Suite, Target
+from temper.providers import SETTINGS, ClaudeSettings, build_provider, same_model
+from temper.suite import Case, Check, Judge, Message, Suite, Target
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -40,6 +40,7 @@ Marks = dict[Loc, yaml.Mark]
 Places = dict[Loc, tuple[str, frozenset[str]]]
 
 _OPTIONS: Final[Loc] = ("target", "options")
+_JUDGE_OPTIONS: Final[Loc] = ("judge", "options")
 
 
 def _field_names(*models: type[BaseModel]) -> frozenset[str]:
@@ -60,9 +61,11 @@ def _places(provider: str | None) -> Places:
         (): ("at the top level", _field_names(Suite)),
         ("target",): ("under target", _field_names(Target)),
         _OPTIONS: ("under target.options", _field_names(*settings)),
+        ("judge",): ("under judge", _field_names(Judge)),
+        _JUDGE_OPTIONS: ("under judge.options", _field_names(ClaudeSettings)),
         ("cases",): ("in a case", _field_names(Case)),
         ("cases", "messages"): ("in a message", _field_names(Message)),
-        ("cases", "checks"): ("in a check", _field_names(Check, *GRADERS.values())),
+        ("cases", "checks"): ("in a check", _field_names(Check, *check_kinds().values())),
     }
 
 
@@ -92,12 +95,14 @@ def load_suite(path: str | PathLike[str]) -> Suite:
 
     Raises:
         SuiteError: the file can't be read, isn't valid YAML, or doesn't describe a usable suite.
+        PluginError: a grader another package registered can't be used.
     """
     source = Path(path)
     document = _parse(source)
     suite, shape = _validate(document, source)
     system, target = _check_target(document, source.parent)
-    problems = [*shape, *document.repeated, *_check_problems(document), *target]
+    checks = [*_check_problems(document), *_check_judge(document, suite)]
+    problems = [*shape, *document.repeated, *checks, *target]
     if suite is None or problems:
         raise SuiteError(source, problems)
     return suite if system is None else _with_system_prompt(suite, system)
@@ -252,6 +257,8 @@ def _unknown_field(loc: Loc, document: _Document) -> str:
         return f"unknown field; did you mean {guess!r}?"
     if here == _OPTIONS and document.provider in SETTINGS:
         return f"not an option of the {document.provider} provider, which takes {_listed(fields)}"
+    if here == _JUDGE_OPTIONS:
+        return f"not an option the judge takes; it takes {_listed(fields)}"
     return "unknown field"
 
 
@@ -283,11 +290,29 @@ def _check_problems(document: _Document) -> Iterator[Problem]:
             except ValidationError:
                 continue  # the shape check has already said what is wrong here
             try:
-                build_grader(check)
+                build_check(check)
             except UnknownNameError as error:
                 yield _at((*here, "type"), str(error), document.marks)
             except ValidationError as error:
                 yield from (_problem(details, document, here) for details in error.errors())
+
+
+def _check_judge(document: _Document, suite: Suite | None) -> Iterator[Problem]:
+    """The judge's options must be Claude's, and the judge can't be the model under test."""
+    try:
+        judge = Judge.model_validate(_entry(document.data, "judge") or {})
+    except ValidationError:
+        return  # the shape check has already said what is wrong here
+    try:
+        ClaudeSettings.model_validate(judge.options)
+    except ValidationError as error:
+        yield from (_problem(details, document, _JUDGE_OPTIONS) for details in error.errors())
+    if suite is None or not suite.judged:
+        return
+    under_test = suite.target.model
+    if under_test is not None and same_model(judge.model, under_test):
+        message = f"the judge can't be the model under test, {under_test!r}; name another model"
+        yield _at(("judge", "model"), message, document.marks)
 
 
 def _check_target(document: _Document, base_dir: Path) -> tuple[str | None, list[Problem]]:

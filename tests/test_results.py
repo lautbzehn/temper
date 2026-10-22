@@ -5,11 +5,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from temper import jsonl
 from temper.errors import RunError
-from temper.providers import FakeProvider, Usage
-from temper.results import Manifest, Run, RunFolder, RunOptions
+from temper.graders import Answer, Grade
+from temper.planning import Providers
+from temper.providers import FakeProvider, Recording, Request, Usage
+from temper.results import Manifest, Run, RunFolder, RunOptions, TrialResult
 from temper.runner import manifest_for
-from tests.support import Scripted, answer, case, make_suite, run
+from tests.support import Scripted, answer, case, make_suite, run, verdict
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,12 +84,16 @@ def test_each_result_line_is_plain_json_with_the_whole_transcript(tmp_path: Path
 
     assert first["request"]["messages"] == [{"role": "user", "content": "A question for steady"}]
     assert first["completion"]["text"] == "yes"
-    assert first["grades"] == [{"check": 'contains "yes"', "passed": True, "reason": 'says "yes"'}]
+    assert first["grades"] == [
+        {"check": 'contains "yes"', "passed": True, "reason": 'says "yes"', "cost_usd": None}
+    ]
 
 
 def test_results_come_back_in_suite_order_however_they_were_added(tmp_path: Path) -> None:
     suite = make_suite(case("steady"), case("wobbly"), trials=2)
-    folder = RunFolder.start(tmp_path, manifest_for(suite, FakeProvider({}), RunOptions()))
+    folder = RunFolder.start(
+        tmp_path, manifest_for(suite, Providers(FakeProvider({})), RunOptions())
+    )
     finished = sample_run(tmp_path)
     for result in reversed(finished.results):
         folder.add(result)
@@ -132,3 +139,60 @@ def test_the_manifest_lists_every_slot_in_suite_order(tmp_path: Path) -> None:
     assert manifest.slots == [("steady", 1), ("steady", 2), ("wobbly", 1), ("wobbly", 2)]
     assert manifest.provider == "fake"
     assert not manifest.charges
+
+
+def test_a_check_without_a_verdict_keeps_the_trial_out_of_the_score(tmp_path: Path) -> None:
+    [result, *_] = sample_run(tmp_path).results
+    unsure = Grade(check='judge "p"', passed=None, reason="no verdict: down", cost_usd=0.01)
+    unjudged = result.model_copy(update={"grades": (unsure, *result.grades)})
+
+    assert result.graded
+    assert result.scored
+    assert not unjudged.graded
+    assert not unjudged.scored
+    assert unjudged.verdicts_usd == 0.01
+    assert unjudged.answer == Answer(
+        text="yes", conversation=result.request.messages, latency_ms=result.latency_ms
+    )
+
+
+def test_a_recording_keeps_each_completion_and_how_long_it_took(tmp_path: Path) -> None:
+    suite = make_suite(case("a"), model="claude-sonnet-5-5")
+    manifest = manifest_for(suite, Providers(Scripted({}, charges=True)), RunOptions())
+    folder = RunFolder.start(tmp_path, manifest)
+    asked = Request(
+        case_id="a",
+        trial=1,
+        model="claude-sonnet-5-5",
+        system=None,
+        messages=suite.cases[0].conversation,
+        max_tokens=8,
+    )
+    answered = TrialResult(
+        request=asked, completion=answer(model="claude-sonnet-5-5"), grades=(), latency_ms=12.5
+    )
+
+    assert not folder.recorded().has(asked)
+    folder.add(answered)
+    folder.record(asked, answered.completion, 12.5)
+    folder.record(asked.model_copy(update={"check": 0}), verdict(passed=True), 3.0)
+
+    recorded = list(jsonl.read(folder.path / "recording.jsonl", Recording))
+    assert [(r.check, r.completion.latency_ms) for r in recorded] == [(None, 12.5), (0, 3.0)]
+    assert folder.recorded().has(asked)
+
+
+def test_a_run_folder_with_a_manifest_that_is_not_json_says_so(tmp_path: Path) -> None:
+    folder = tmp_path / sample_run(tmp_path).manifest.run_id
+    (folder / "manifest.json").write_text("{]", encoding="utf-8")
+
+    with pytest.raises(RunError, match="holds a manifest Temper can't read"):
+        RunFolder.open(folder)
+
+
+def test_a_run_folder_with_a_bad_line_says_which_line(tmp_path: Path) -> None:
+    folder = tmp_path / sample_run(tmp_path).manifest.run_id
+    (folder / "results.jsonl").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(RunError, match=r"line 1 of .*results\.jsonl"):
+        RunFolder.open(folder)

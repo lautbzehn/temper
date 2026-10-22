@@ -391,3 +391,87 @@ def test_a_loaded_suite_remembers_its_folder() -> None:
 
     assert suite.folder == EXAMPLE.parent
     assert suite.model_copy().folder == EXAMPLE.parent
+
+
+def test_a_typo_under_judge_is_caught_at_its_line(files: Files) -> None:
+    files.write("replies.yaml", REPLIES)
+    block = "judge:\n  modle: claude-opus-5-5\ncases:"
+    path = files.write("suite.yaml", VALID.replace("cases:", block))
+
+    assert problems(path) == [(8, "judge.modle", "unknown field; did you mean 'model'?")]
+
+
+def test_an_option_the_judge_does_not_take_is_caught_at_its_line(files: Files) -> None:
+    files.write("replies.yaml", REPLIES)
+    block = "judge:\n  options:\n    effort: low\n    temperature: 1\ncases:"
+    path = files.write("suite.yaml", VALID.replace("cases:", block))
+
+    assert problems(path) == [
+        (
+            10,
+            "judge.options.temperature",
+            "not an option the judge takes; it takes effort, timeout_s",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("under_test", "judge"),
+    [
+        ("claude-opus-5-5", "claude-opus-5-5"),
+        ("claude-opus-5-5-20260601", "claude-opus-5-5"),
+        ("claude-opus-5-5", "claude-opus-5-5-20260601"),
+    ],
+)
+def test_the_judge_cannot_be_the_model_under_test(
+    files: Files, under_test: str, judge: str
+) -> None:
+    path = files.write(
+        "suite.yaml",
+        f"""
+        schema: 1
+        name: self-judged
+        target: {{provider: claude, model: {under_test}}}
+        judge:
+          model: {judge}
+        cases:
+          - id: a
+            input: Hi
+            checks:
+              - {{type: judge, property: is polite}}
+        """,
+    )
+
+    assert problems(path) == [
+        (
+            5,
+            "judge.model",
+            f"the judge can't be the model under test, {under_test!r}; name another model",
+        )
+    ]
+
+
+def test_the_model_under_test_may_be_the_judge_when_nothing_is_judged(files: Files) -> None:
+    path = files.write(
+        "suite.yaml",
+        """
+        schema: 1
+        name: unjudged
+        target: {provider: claude, model: claude-opus-5-5}
+        cases:
+          - id: a
+            input: Hi
+            checks:
+              - {type: contains, text: hello}
+        """,
+    )
+
+    assert load_suite(path).judge.model == "claude-opus-5-5"
+
+
+def test_a_judge_check_needs_its_property(files: Files) -> None:
+    files.write("replies.yaml", REPLIES)
+    bare = VALID.replace('      - type: contains\n        text: "yes"', "      - type: judge")
+    path = files.write("suite.yaml", bare)
+
+    assert problems(path) == [(11, "cases[0].checks[0]", "missing required field 'property'")]

@@ -11,21 +11,27 @@ from hypothesis import strategies as st
 
 from temper.errors import ProviderError, RunError, TransientError
 from temper.loading import load_suite
-from temper.providers import Completion, FakeProvider, ReplayProvider, Request, Usage
+from temper.planning import Providers
+from temper.pricing import cost_usd
+from temper.providers import (
+    Completion,
+    FakeProvider,
+    ReplayProvider,
+    Request,
+    Usage,
+    served_matches,
+)
 from temper.results import RunFolder, RunOptions
 from temper.runner import (
     BACKOFF_CAP_S,
     Budget,
-    Plan,
     backoff,
     complete_run,
     reopen_run,
     resume_run,
-    served_matches,
     start_run,
-    worst_case_usd,
 )
-from tests.support import Scripted, Slow, Stuck, answer, case, make_suite, run
+from tests.support import Scripted, Slow, Stuck, answer, case, make_suite, plan, run
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -69,7 +75,7 @@ def test_each_answer_is_graded_by_every_check(tmp_path: Path) -> None:
 
     assert [grade.passed for grade in result.grades] == [True, False]
     assert not result.passed
-    assert result.answer == "Sorry! Please calm down."
+    assert result.answer.text == "Sorry! Please calm down."
     assert result.completion.model == "fake-1"
 
 
@@ -243,7 +249,9 @@ def test_a_request_cut_off_by_the_time_limit_is_counted_at_its_worst_case(tmp_pa
     [failure] = finished.failures
     assert failure.kind == "timeout"
     assert failure.cost_usd is None
-    assert finished.manifest.spent_usd == pytest.approx(worst_case_usd(suite, 1_000))
+    assert finished.manifest.spent_usd == pytest.approx(
+        cost_usd(Usage(input_tokens=1_000, output_tokens=1024), "claude-sonnet-5-5")
+    )
 
 
 def test_a_budget_needs_estimates_and_says_so_when_it_cannot_get_them(tmp_path: Path) -> None:
@@ -310,17 +318,17 @@ def test_an_interrupted_run_resumes_to_what_a_straight_run_would_have_been(
             return await super().complete(request)
 
     cut = PowerCut({name: [answer()] * 2 for name in "abc"})
-    folder = start_run(suite, cut, out=out, options=RunOptions(concurrency=1))
+    folder = start_run(suite, Providers(cut), out=out, options=RunOptions(concurrency=1))
     with pytest.raises(ExceptionGroup):
-        asyncio.run(complete_run(suite, cut, folder, Plan({}, None)))
+        asyncio.run(complete_run(plan(suite, cut), folder))
     assert len(folder.answered) == 2
     assert folder.manifest.finished_at is None
 
     replies = FakeProvider.from_file(files.root / "replies.yaml")
-    resumed = asyncio.run(resume_run(folder.path, replies))
+    resumed = asyncio.run(resume_run(folder.path, Providers(replies)))
 
-    assert [(r.case_id, r.trial, r.answer) for r in resumed.results] == [
-        (r.case_id, r.trial, r.answer) for r in straight.results
+    assert [(r.case_id, r.trial, r.answer.text) for r in resumed.results] == [
+        (r.case_id, r.trial, r.answer.text) for r in straight.results
     ]
     assert resumed.manifest.resumed == 1
     assert resumed.manifest.finished_at is not None
@@ -342,14 +350,14 @@ def test_resuming_answers_only_the_trials_that_failed(files: Files) -> None:
     )
     suite = load_suite(path)
     first = Scripted({"a": [answer(), ProviderError("hiccup"), answer()]})
-    folder = start_run(suite, first, out=files.root / "runs")
-    asyncio.run(complete_run(suite, first, folder, Plan({}, None)))
+    folder = start_run(suite, Providers(first), out=files.root / "runs")
+    asyncio.run(complete_run(plan(suite, first), folder))
 
     second = Scripted({"a": [answer("yes again")]})
-    resumed = asyncio.run(resume_run(folder.path, second))
+    resumed = asyncio.run(resume_run(folder.path, Providers(second)))
 
     assert second.calls == [("a", 2)]
-    assert [r.answer for r in resumed.results] == ["yes", "yes again", "yes"]
+    assert [r.answer.text for r in resumed.results] == ["yes", "yes again", "yes"]
     assert [f.reason for f in resumed.failures] == ["hiccup"]
 
 
@@ -368,12 +376,12 @@ def test_resume_run_builds_its_own_provider_from_the_run_when_given_none(files: 
     )
     suite = load_suite(path)
     first = Scripted({"a": [answer(), ProviderError("hiccup")]})
-    folder = start_run(suite, first, out=files.root / "runs")
-    asyncio.run(complete_run(suite, first, folder, Plan({}, None)))
+    folder = start_run(suite, Providers(first), out=files.root / "runs")
+    asyncio.run(complete_run(plan(suite, first), folder))
 
     resumed = asyncio.run(resume_run(folder.path))
 
-    assert [r.answer for r in resumed.results] == ["yes", "yes"]
+    assert [r.answer.text for r in resumed.results] == ["yes", "yes"]
     assert resumed.missing == []
 
 
@@ -389,7 +397,9 @@ def test_a_run_whose_suite_changed_cannot_be_resumed(files: Files) -> None:
           - {id: a, input: Hi, checks: [{type: contains, text: "yes"}]}
         """,
     )
-    folder = start_run(load_suite(path), Scripted({"a": [answer()]}), out=files.root / "runs")
+    folder = start_run(
+        load_suite(path), Providers(Scripted({"a": [answer()]})), out=files.root / "runs"
+    )
     path.write_text(path.read_text().replace("input: Hi", "input: Hello"), encoding="utf-8")
 
     with pytest.raises(RunError, match="the suite has changed since run"):
@@ -397,7 +407,7 @@ def test_a_run_whose_suite_changed_cannot_be_resumed(files: Files) -> None:
 
 
 def test_a_run_of_a_suite_built_in_code_cannot_be_resumed(tmp_path: Path) -> None:
-    folder = start_run(make_suite(case("a")), Scripted({"a": [answer()]}), out=tmp_path)
+    folder = start_run(make_suite(case("a")), Providers(Scripted({"a": [answer()]})), out=tmp_path)
 
     with pytest.raises(RunError, match="wasn't loaded from a file"):
         reopen_run(folder.path)
@@ -438,8 +448,8 @@ def test_a_cancelled_run_keeps_what_it_had_and_resumes_cleanly(files: Files) -> 
 
     async def interrupted() -> RunFolder:
         provider = HalfStuck()
-        folder = start_run(suite, provider, out=files.root / "runs")
-        running = asyncio.create_task(complete_run(suite, provider, folder, Plan({}, None)))
+        folder = start_run(suite, Providers(provider), out=files.root / "runs")
+        running = asyncio.create_task(complete_run(plan(suite, provider), folder))
         await provider.asked.wait()
         running.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -451,9 +461,9 @@ def test_a_cancelled_run_keeps_what_it_had_and_resumes_cleanly(files: Files) -> 
     assert not (folder.path / "errors.jsonl").exists()
     assert folder.manifest.finished_at is None
 
-    resumed = asyncio.run(resume_run(folder.path, Scripted({"b": [answer()]})))
+    resumed = asyncio.run(resume_run(folder.path, Providers(Scripted({"b": [answer()]}))))
 
-    assert [(r.case_id, r.answer) for r in resumed.results] == [("a", "yes"), ("b", "yes")]
+    assert [(r.case_id, r.answer.text) for r in resumed.results] == [("a", "yes"), ("b", "yes")]
     assert resumed.failures == ()
     assert resumed.manifest.resumed == 1
     assert resumed.manifest.finished_at is not None
@@ -471,7 +481,7 @@ def test_a_live_run_can_be_replayed_without_spending_anything(tmp_path: Path) ->
     replay = ReplayProvider.from_file(tmp_path / live.manifest.run_id / "recording.jsonl")
     replayed = run(suite, replay, tmp_path)
 
-    assert [r.answer for r in replayed.results] == [r.answer for r in live.results]
+    assert [r.answer.text for r in replayed.results] == [r.answer.text for r in live.results]
     assert replayed.cost_usd == pytest.approx(live.cost_usd)
     assert live.manifest.charges
     assert not replayed.manifest.charges
