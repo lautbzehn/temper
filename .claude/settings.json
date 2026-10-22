@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/check-python.sh",
+            "timeout": 120,
+            "statusMessage": "Formatting, linting, and type-checking"
+          }
+        ]
+      }
+    ]
+  }
+}
