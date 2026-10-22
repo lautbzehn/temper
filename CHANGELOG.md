@@ -2,7 +2,7 @@
 
 All notable changes to Temper. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [0.2.0] · Unreleased
+## [0.2.0] · 10.22.2026
 
 Real runs, honest numbers: Claude answers the cases, and every attempt is written down for what it was.
 
