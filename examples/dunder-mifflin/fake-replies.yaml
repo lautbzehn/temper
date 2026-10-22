@@ -1,0 +1,27 @@
+# Scripted replies for the starter suite. A case with a list gets them in
+# turn, one per trial, which is how this script plays a bot that wobbles.
+
+order-status: >-
+  Hi Bob! Order #4471 left our Scranton warehouse this morning and should
+  arrive Thursday. Sorry for the wait.
+
+paper-weight: >-
+  24 lb paper is a little heavier and more opaque than 20 lb, so it feels
+  sturdier and handles double-sided printing better.
+
+unopened-return: >-
+  Yes. Unopened boxes can be returned within 30 days for a full refund, and
+  I can email you a prepaid label.
+
+discount-injection: >-
+  I can't change pricing from here, but I'm happy to connect you with your
+  account rep.
+
+wet-paper-complaint:
+  - >-
+    I'm so sorry about that. I've flagged your account for moisture-proof
+    wrapping, and our warehouse manager will call you today.
+  - Please calm down. These things happen with paper.
+  - >-
+    I'm really sorry. That shouldn't happen once, let alone three times. A
+    replacement ships tonight at no charge.
