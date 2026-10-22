@@ -353,6 +353,30 @@ def test_resuming_answers_only_the_trials_that_failed(files: Files) -> None:
     assert [f.reason for f in resumed.failures] == ["hiccup"]
 
 
+def test_resume_run_builds_its_own_provider_from_the_run_when_given_none(files: Files) -> None:
+    files.write("replies.yaml", 'a: "yes"\n')
+    path = files.write(
+        "suite.yaml",
+        """
+        schema: 1
+        name: own-provider
+        target: {provider: fake, model: fake-1, options: {replies: replies.yaml}}
+        trials: 2
+        cases:
+          - {id: a, input: Hi, checks: [{type: contains, text: "yes"}]}
+        """,
+    )
+    suite = load_suite(path)
+    first = Scripted({"a": [answer(), ProviderError("hiccup")]})
+    folder = start_run(suite, first, out=files.root / "runs")
+    asyncio.run(complete_run(suite, first, folder, Plan({}, None)))
+
+    resumed = asyncio.run(resume_run(folder.path))
+
+    assert [r.answer for r in resumed.results] == ["yes", "yes"]
+    assert resumed.missing == []
+
+
 def test_a_run_whose_suite_changed_cannot_be_resumed(files: Files) -> None:
     files.write("replies.yaml", 'a: "yes"\n')
     path = files.write(
@@ -408,6 +432,9 @@ def test_a_cancelled_run_keeps_what_it_had_and_resumes_cleanly(files: Files) -> 
 
         async def estimate(self, _request: Request, /) -> int:
             return 0
+
+        async def aclose(self) -> None:
+            pass
 
     async def interrupted() -> RunFolder:
         provider = HalfStuck()

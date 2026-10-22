@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import textwrap
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,7 +17,7 @@ from temper.runner import run_suite
 from temper.suite import Suite
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from temper.providers import Provider, Status
     from temper.results import Run, RunOptions
@@ -100,6 +104,9 @@ class Scripted:
     async def estimate(self, request: Request, /) -> int:
         return self.tokens.get(request.case_id, 0)
 
+    async def aclose(self) -> None:
+        pass
+
 
 @dataclass
 class Stuck:
@@ -116,6 +123,9 @@ class Stuck:
 
     async def estimate(self, _request: Request, /) -> int:
         return self.tokens
+
+    async def aclose(self) -> None:
+        pass
 
 
 @dataclass
@@ -144,3 +154,52 @@ class Slow:
 
     async def estimate(self, _request: Request, /) -> int:
         return 0
+
+    async def aclose(self) -> None:
+        pass
+
+
+class _ApiHandler(BaseHTTPRequestHandler):
+    """Answers like the Anthropic API would, over real keep-alive connections."""
+
+    protocol_version = "HTTP/1.1"
+
+    def do_POST(self) -> None:
+        self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        body: dict[str, object]
+        if self.path.endswith("/count_tokens"):
+            body = {"input_tokens": 10}
+        else:
+            body = {
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-5-5",
+                "content": [{"type": "text", "text": "Hello!"}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            }
+        payload = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *_: object) -> None:
+        """Keep the test output clean."""
+
+
+@contextmanager
+def local_api() -> Iterator[str]:
+    """A stand-in for the Anthropic API on a real local socket; yields its base URL."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ApiHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

@@ -257,6 +257,13 @@ def test_estimate_counts_tokens_through_the_api() -> None:
     assert api.sent[0]["system"] == "Be brief."
 
 
+def test_closing_twice_is_fine() -> None:
+    provider = Api(lambda _: httpx2.Response(200, json=message())).provider()
+
+    asyncio.run(provider.aclose())
+    asyncio.run(provider.aclose())
+
+
 def test_an_estimate_that_fails_is_an_error() -> None:
     api = Api(lambda _: api_error(400, "invalid_request_error", "no such model"))
 

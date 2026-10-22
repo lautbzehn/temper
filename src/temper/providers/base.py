@@ -79,3 +79,7 @@ class Provider(Protocol):
     async def estimate(self, request: Request, /) -> int:
         """How many input tokens the request would use, as closely as the provider can tell."""
         ...
+
+    async def aclose(self) -> None:
+        """Let go of anything held open, such as connections. Safe to call more than once."""
+        ...
