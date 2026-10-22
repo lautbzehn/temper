@@ -130,8 +130,18 @@ def test_a_replay_refuses_an_answer_recorded_for_a_different_prompt(files: Files
     recorded = Recording.of(request("case", 1, text="Where is my order?"), answer())
     provider = ReplayProvider.from_file(recording_file(files, recorded))
 
-    with pytest.raises(ProviderError, match="made for a different prompt, model, or max_tokens"):
+    with pytest.raises(ProviderError, match="made for a different prompt, model, options, or max"):
         asyncio.run(provider.complete(request("case", 1, text="Where is my refund?")))
+
+
+def test_a_replay_refuses_an_answer_recorded_with_different_options(files: Files) -> None:
+    low = request("case", 1).model_copy(update={"options": {"effort": "low"}})
+    high = request("case", 1).model_copy(update={"options": {"effort": "max"}})
+    provider = ReplayProvider.from_file(recording_file(files, Recording.of(low, answer())))
+
+    assert low.fingerprint != high.fingerprint
+    with pytest.raises(ProviderError, match="different prompt, model, options, or max_tokens"):
+        asyncio.run(provider.complete(high))
 
 
 def test_a_recording_with_the_same_trial_twice_is_an_error(files: Files) -> None:

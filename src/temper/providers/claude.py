@@ -42,6 +42,7 @@ _RETRY_LATER = frozenset({408, 409})
 _NO_CREDENTIALS = (
     "no Anthropic credentials found; set ANTHROPIC_API_KEY or sign in with `ant auth login`"
 )
+_NEEDS_MODEL = "the claude provider needs target.model, for example claude-sonnet-5-5"
 
 
 class ClaudeProvider:
@@ -79,14 +80,19 @@ class ClaudeProvider:
         except anthropic.APIStatusError as error:
             if error.status_code in _RETRY_LATER or error.status_code >= _SERVER_ERRORS:
                 raise TransientError(
-                    f"the API couldn't answer ({error.status_code}): {_said(error)}"
+                    f"the API couldn't answer ({error.status_code}): {_said(error)}",
+                    retry_after=_retry_after(error),
                 ) from error
             raise ProviderError(
                 f"the API refused the request ({error.status_code}): {_said(error)}"
             ) from error
         except anthropic.APIConnectionError as error:
             raise TransientError(f"couldn't reach the API: {error}") from error
-        return _completion(message)
+        try:
+            return _completion(message)
+        except (TypeError, AttributeError) as error:
+            # The SDK is lenient about a 200 whose body isn't a message; Temper isn't.
+            raise ProviderError("the API's answer wasn't a message Temper can read") from error
 
     async def estimate(self, request: Request, /) -> int:
         """Count the request's input tokens with the API, which costs nothing."""
@@ -102,6 +108,11 @@ class ClaudeProvider:
         return count.input_tokens
 
     def _require_credentials(self) -> None:
+        """Refuse to call the API with no credentials.
+
+        Checked on every call rather than when the provider is built, so a
+        suite can be validated and replayed with no credentials at all.
+        """
         client = self._client
         if client.api_key is None and client.auth_token is None and client.credentials is None:
             raise ProviderError(_NO_CREDENTIALS)
@@ -119,7 +130,7 @@ def _said(error: anthropic.APIStatusError) -> str:
 
 def _model(request: Request) -> str:
     if request.model is None:
-        raise ProviderError("the claude provider needs target.model, for example claude-sonnet-5-5")
+        raise ProviderError(_NEEDS_MODEL)
     return request.model
 
 
@@ -129,7 +140,7 @@ def _as_param(message: Message) -> MessageParam:
     return {"role": "assistant", "content": message.content}
 
 
-def _retry_after(error: anthropic.RateLimitError) -> float | None:
+def _retry_after(error: anthropic.APIStatusError) -> float | None:
     """How long the API asked us to wait, when it said so in seconds."""
     header = error.response.headers.get("retry-after")
     try:
@@ -173,5 +184,5 @@ def _usage(usage: ApiUsage) -> Usage:
 def build(target: Target, _base_dir: Path) -> ClaudeProvider:
     """A Claude provider from a suite's target."""
     if target.model is None:
-        raise ProviderError("the claude provider needs target.model, for example claude-sonnet-5-5")
+        raise ProviderError(_NEEDS_MODEL)
     return ClaudeProvider.from_settings(ClaudeSettings.model_validate(target.options))

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from rich.table import Table
 from rich.text import Text
 
+from temper.pricing import price_of
 from temper.runner import worst_case_usd
 
 if TYPE_CHECKING:
@@ -105,7 +106,7 @@ def render_estimate(
             Text(f"The {provider} provider answers for free; nothing to spend.", style="dim")
         )
         return
-    if suite.target.model and worst_case_usd(suite, 1) == 0:
+    if suite.target.model and price_of(suite.target.model) is None:
         console.print(Text(f"No list price for model {suite.target.model!r}.", style="yellow"))
     console.print(
         Text.assemble(

@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from temper.suite import Message
 
@@ -38,10 +38,11 @@ class Request(BaseModel):
     system: str | None
     messages: tuple[Message, ...]
     max_tokens: int
+    options: dict[str, JsonValue] = Field(default_factory=dict)
 
     @property
     def fingerprint(self) -> str:
-        """A short hash of what the model is sent, so a recording can tell when that changed."""
+        """A short hash of everything the model is sent, so a recording can tell when it changed."""
         sent = self.model_dump_json(exclude={"case_id", "trial"})
         return hashlib.sha256(sent.encode()).hexdigest()[:16]
 

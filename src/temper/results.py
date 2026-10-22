@@ -18,13 +18,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from temper.errors import RunError, UnreadableFileError
 from temper.files import read_text
 from temper.graders import Grade
-from temper.providers import Completion, Recording, Request, Status
+from temper.providers import Completion, Recording, Request, Slot, Status
 from temper.suite import Closed, Count
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-Slot = tuple[str, int]
 Record = TypeVar("Record", bound=BaseModel)
 FailureKind = Literal["timeout", "provider", "served-model", "budget"]
 
@@ -100,6 +99,8 @@ class TrialFailure(BaseModel):
     kind: FailureKind
     reason: str
     attempts: int
+    retries: tuple[Retry, ...] = ()
+    cost_usd: float | None = None
     at: datetime
 
 
@@ -124,6 +125,7 @@ class Manifest(BaseModel):
     started_at: datetime
     finished_at: datetime | None = None
     resumed: int = 0
+    spent_usd: float | None = None
 
     @property
     def slots(self) -> list[Slot]:
@@ -154,8 +156,9 @@ class Run(BaseModel):
 
     @property
     def cost_usd(self) -> float | None:
-        """What the answers cost at list price, or None when nothing was priced."""
-        priced = [result.cost_usd for result in self.results if result.cost_usd is not None]
+        """What every attempt cost at list price, failures included, or None if none was priced."""
+        attempts: list[TrialResult | TrialFailure] = [*self.results, *self.failures]
+        priced = [attempt.cost_usd for attempt in attempts if attempt.cost_usd is not None]
         return sum(priced) if priced else None
 
     @property
@@ -217,11 +220,6 @@ class RunFolder:
         return cls(path, manifest, results, failures)
 
     @property
-    def is_empty(self) -> bool:
-        """Whether nothing has been kept yet, neither an answer nor a failure."""
-        return not self._results and not self._failures
-
-    @property
     def answered(self) -> frozenset[Slot]:
         """The (case, trial) slots that already have an answer."""
         return frozenset((result.case_id, result.trial) for result in self._results)
@@ -245,9 +243,11 @@ class RunFolder:
         )
         self._write_manifest()
 
-    def finish(self) -> None:
-        """Note when the run ended."""
-        self.manifest = self.manifest.model_copy(update={"finished_at": datetime.now(UTC)})
+    def finish(self, spent_usd: float) -> None:
+        """Note when the run ended, and what its budget counted as spent, on top of earlier runs."""
+        spent = (self.manifest.spent_usd or 0.0) + spent_usd
+        update = {"finished_at": datetime.now(UTC), "spent_usd": spent}
+        self.manifest = self.manifest.model_copy(update=update)
         self._write_manifest()
 
     def run(self) -> Run:

@@ -11,13 +11,13 @@ Real runs, honest numbers: Claude answers the cases, and every attempt is writte
 - The `claude` provider, on the Anthropic SDK with its own retries off. A target names the model; `options` can set `effort` and `timeout_s`.
 - The `replay` provider and `temper run --replay`, which answer from a `recording.jsonl` that every paid run writes, and refuse a trial whose prompt has changed since.
 - Retries of transient trouble with doubling, jittered backoff that honours `retry-after`, written on each result; `--attempts` sets the limit.
-- `--time-limit` per trial, retries included, and `--budget`, which reserves each request's worst case so a run can't overspend.
+- `--time-limit` per trial, retries included, and `--budget`, which reserves each request's worst case so a run can't overspend. A budget is refused up front on a model with no list price, and means nothing to a provider that answers for free.
 - `--dry-run`, which counts each case's tokens and prices the worst case without running.
 - `temper resume`, which picks up a kept run and answers only the trials that still have no answer. `temper run` exits 2 while any trial is unanswered.
 - `errors.jsonl` for attempts that never produced an answer, with a kind and a reason, kept apart from `results.jsonl`.
 - Answer statuses: `complete`, `truncated`, and `refused`. Pass rates count complete answers only; the others get their own counts.
 - A check that the model that answered is the one asked for.
-- Cost at list price from the API's own token counts, and a free preflight before any paid run.
+- Cost at list price from the API's own token counts, failures included, and a free preflight before any paid run, done before the run's folder exists so a run that can't start leaves nothing behind.
 
 ### Changed
 

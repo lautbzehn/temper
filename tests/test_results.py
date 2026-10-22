@@ -38,6 +38,7 @@ def test_a_run_counts_what_it_scored(tmp_path: Path) -> None:
     assert len(finished.scored) == 4
     assert finished.missing == []
     assert finished.cost_usd is None
+    assert finished.manifest.spent_usd == 0.0
 
 
 def test_a_run_tells_complete_answers_from_cut_off_and_refused_ones(tmp_path: Path) -> None:

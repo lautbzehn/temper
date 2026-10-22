@@ -174,6 +174,22 @@ def test_a_rate_limit_without_a_usable_wait_passes_none() -> None:
     assert caught.value.retry_after is None
 
 
+def test_an_outage_passes_on_the_wait_the_api_asked_for() -> None:
+    api = Api(lambda _: api_error(529, "overloaded_error", "busy", **{"retry-after": "12"}))
+
+    with pytest.raises(TransientError) as caught:
+        complete(api)
+
+    assert caught.value.retry_after == 12.0
+
+
+def test_an_answer_that_is_not_a_message_is_an_error_not_a_crash() -> None:
+    api = Api(lambda _: httpx2.Response(200, json={"unexpected": True}))
+
+    with pytest.raises(ProviderError, match="wasn't a message Temper can read"):
+        complete(api)
+
+
 @pytest.mark.parametrize("status", [408, 409, 500, 529])
 def test_an_outage_is_transient(status: int) -> None:
     api = Api(lambda _: api_error(status, "overloaded_error", "busy"))

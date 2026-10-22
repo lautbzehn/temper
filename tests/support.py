@@ -102,6 +102,23 @@ class Scripted:
 
 
 @dataclass
+class Stuck:
+    """A provider that never answers; `asked` is set once a request is waiting on it."""
+
+    charges: bool = True
+    tokens: int = 1_000
+    asked: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def complete(self, _request: Request, /) -> Completion:
+        self.asked.set()
+        await asyncio.Event().wait()
+        raise AssertionError("never answers")
+
+    async def estimate(self, _request: Request, /) -> int:
+        return self.tokens
+
+
+@dataclass
 class Slow:
     """A provider that holds each request for a moment and counts how many it holds at once.
 

@@ -13,12 +13,23 @@ from temper.errors import ProviderError, RunError, SuiteError, TransientError, U
 from temper.loading import load_suite
 from temper.providers import build_provider
 from temper.results import Run, RunFolder, RunOptions, TrialFailure, TrialResult
-from temper.runner import estimate_suite, open_run, provider_for, run_folder, run_suite, start_run
+from temper.runner import (
+    Plan,
+    complete_run,
+    estimate_suite,
+    plan_run,
+    provider_for,
+    reopen_run,
+    resume_run,
+    run_suite,
+    start_run,
+)
 from temper.suite import Suite
 
 __version__ = version("temper-evals")
 
 __all__ = [
+    "Plan",
     "ProviderError",
     "Run",
     "RunError",
@@ -32,11 +43,13 @@ __all__ = [
     "UnknownNameError",
     "__version__",
     "build_provider",
+    "complete_run",
     "estimate_suite",
     "load_suite",
-    "open_run",
+    "plan_run",
     "provider_for",
-    "run_folder",
+    "reopen_run",
+    "resume_run",
     "run_suite",
     "start_run",
 ]

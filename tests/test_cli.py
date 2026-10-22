@@ -170,7 +170,7 @@ def test_a_run_that_cannot_begin_keeps_nothing(
     assert "run stopped before it began, so nothing was kept: no Anthropic credentials found" in (
         result.output
     )
-    assert list(out.iterdir()) == []
+    assert not out.exists()
 
 
 def test_an_interrupted_run_says_where_it_is_kept(
@@ -179,7 +179,7 @@ def test_an_interrupted_run_says_where_it_is_kept(
     async def interrupted(*_: object) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr("temper.cli.run_folder", interrupted)
+    monkeypatch.setattr("temper.cli.complete_run", interrupted)
 
     result = runner.invoke(app, ["run", str(EXAMPLE), "--out", str(tmp_path)])
 
@@ -267,9 +267,37 @@ def test_resume_keeps_what_it_has_when_the_provider_cannot_start(
     result = runner.invoke(app, ["resume", str(folder)])
 
     assert result.exit_code == 1
-    assert "run stopped: no Anthropic credentials found" in result.output
-    assert f"Pick it up with: temper resume {folder}" in result.output
+    assert "the run wasn't picked up: no Anthropic credentials found" in result.output
     assert (folder / "results.jsonl").exists()
+
+
+def test_a_budget_on_an_unpriced_model_is_refused_before_anything_is_kept(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = claude_suite(files, model="claude-unknown-9")
+    out = files.root / "runs"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    monkeypatch.setattr("temper.providers.claude.AsyncAnthropic", mock_client)
+
+    result = runner.invoke(app, ["run", str(path), "--out", str(out), "--budget", "1"])
+
+    assert result.exit_code == 1
+    assert "run stopped before it began, so nothing was kept: can't hold a budget" in result.output
+    assert not out.exists()
+
+
+def test_an_unexpected_error_still_says_where_the_run_is(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def broken(*_: object) -> None:
+        raise RuntimeError("a bug")
+
+    monkeypatch.setattr("temper.cli.complete_run", broken)
+
+    result = runner.invoke(app, ["run", str(EXAMPLE), "--out", str(tmp_path)])
+
+    assert isinstance(result.exception, RuntimeError)
+    assert "Stopped by an unexpected error. What finished is kept." in result.output
 
 
 def test_a_run_can_be_replayed_from_a_recording(

@@ -50,7 +50,7 @@ temper resume runs/20261022-091500-3f2a         # after an interrupt, or a faile
 temper run suite.yaml --replay runs/20261022-091500-3f2a/recording.jsonl
 ```
 
-A paid run begins with one free call that proves the credentials and the model, so a bad key stops the run before any money is spent. The budget reserves each request's worst case before it is sent, so a run can stop short of the budget but can't pass it. Rate limits, outages, and network trouble are retried with a doubling, jittered delay, and every retry is written on the result.
+A paid run begins with one free call that proves the credentials and the model, so a bad key stops the run before any money is spent or any folder is made. The budget reserves each request's worst case before it is sent, so a run can stop short of the budget but can't pass it; it needs a model with a list price, and a provider that answers for free has nothing to budget. Rate limits, outages, and network trouble are retried with a doubling, jittered delay that honours the API's own `retry-after`, and every retry is written on the result.
 
 ## What a run keeps
 

@@ -9,7 +9,7 @@ from temper.providers import claude, fake, replay
 from temper.providers.base import Completion, Provider, Request, Status, Usage
 from temper.providers.claude import ClaudeProvider, ClaudeSettings
 from temper.providers.fake import FakeProvider, FakeSettings
-from temper.providers.replay import Recording, ReplayProvider, ReplaySettings
+from temper.providers.replay import Recording, ReplayProvider, ReplaySettings, Slot
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -59,6 +59,7 @@ __all__ = [
     "ReplayProvider",
     "ReplaySettings",
     "Request",
+    "Slot",
     "Status",
     "Usage",
     "build_provider",

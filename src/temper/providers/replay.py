@@ -103,7 +103,7 @@ class ReplayProvider:
         if recording.fingerprint != request.fingerprint:
             raise ProviderError(
                 f"the recorded answer for case {request.case_id!r} trial {request.trial} "
-                "was made for a different prompt, model, or max_tokens; "
+                "was made for a different prompt, model, options, or max_tokens; "
                 "run the suite live again to record it"
             )
         return recording.completion

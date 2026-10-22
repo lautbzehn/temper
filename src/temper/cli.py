@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
+from contextlib import contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, NoReturn, TypeVar
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
 from rich.console import Console
@@ -14,17 +14,23 @@ from temper import __version__
 from temper.errors import ProviderError, RunError, SuiteError
 from temper.loading import load_suite
 from temper.results import RunOptions
-from temper.runner import estimate_suite, open_run, provider_for, run_folder, start_run
+from temper.runner import (
+    complete_run,
+    estimate_suite,
+    plan_run,
+    provider_for,
+    reopen_run,
+    start_run,
+)
 from temper.summary import plural, render_estimate, render_run
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Iterator
 
     from temper.providers import Provider
     from temper.results import RunFolder
+    from temper.runner import Plan
     from temper.suite import Suite
-
-T = TypeVar("T")
 
 app = typer.Typer(
     help="Test AI features the way you test code, and know when a difference is real.",
@@ -62,7 +68,8 @@ def main(
 @app.command()
 def validate(suite: SuiteFile) -> None:
     """Check a suite file and report every problem with its line number."""
-    loaded = _load(suite)
+    with _plain_errors():
+        loaded = load_suite(suite)
     checks = sum(len(case.checks) for case in loaded.cases)
     summary = f"{plural(len(loaded.cases), 'case')}, {plural(checks, 'check')}"
     out.print(f"✓ {suite} is valid: {summary}", style="green", markup=False)
@@ -99,50 +106,57 @@ def run(
 ) -> None:
     """Run every case in a suite, grade the answers, and keep the results.
 
-    Exits 0 when every trial was answered, and 2 when some attempts failed, in
-    which case `temper resume` can try them again. The results aren't judged yet.
+    Exits 0 when every trial was answered, and 2 when some weren't, in which
+    case `temper resume` can try them again. The results aren't judged yet.
     """
-    loaded = _load(suite)
     options = RunOptions(
         trials=trials,
         concurrency=concurrency,
         time_limit_s=time_limit,
         attempts=attempts,
         budget_usd=budget,
-        replay=replay,
+        replay=replay.resolve() if replay else None,
     )
-    provider = _ready(lambda: provider_for(loaded, options))
-    if dry_run:
-        estimates = _ready(lambda: asyncio.run(estimate_suite(loaded, provider, options)))
-        render_estimate(loaded, estimates, options, out, charges=provider.charges)
-        return
+    with _plain_errors():
+        loaded = load_suite(suite)
+        provider = provider_for(loaded, options)
+        if dry_run:
+            estimates = asyncio.run(estimate_suite(loaded, provider, options))
+            render_estimate(loaded, estimates, options, out, charges=provider.charges)
+            return
+    plan = _planned(loaded, provider, options, "run stopped before it began, so nothing was kept")
     _prepare(out_dir)
-    _finish(loaded, provider, start_run(loaded, provider, out=out_dir, options=options))
+    _finish(loaded, provider, start_run(loaded, provider, out=out_dir, options=options), plan)
 
 
 @app.command()
 def resume(folder: RunDir) -> None:
     """Pick up a kept run, answering only the trials that still have no answer."""
-    loaded, opened = _ready(lambda: open_run(folder))
-    provider = _ready(lambda: provider_for(loaded, opened.manifest.options))
-    _finish(loaded, provider, opened)
+    with _plain_errors():
+        loaded, opened = reopen_run(folder)
+        provider = provider_for(loaded, opened.manifest.options)
+    plan = _planned(loaded, provider, opened.manifest.options, "the run wasn't picked up")
+    opened.resume()
+    _finish(loaded, provider, opened, plan)
 
 
-def _load(path: Path) -> Suite:
+@contextmanager
+def _plain_errors() -> Iterator[None]:
+    """Turn the errors a person can act on into plain lines and an exit code of 1."""
     try:
-        return load_suite(path)
-    except SuiteError as error:
-        _fail(*error.lines())
-
-
-def _ready(make: Callable[[], T]) -> T:
-    """What `make` returns, or a plain failure when it can't be made."""
-    try:
-        return make()
+        yield
     except SuiteError as error:
         _fail(*error.lines())
     except (ProviderError, RunError) as error:
         _fail(str(error))
+
+
+def _planned(suite: Suite, provider: Provider, options: RunOptions, otherwise: str) -> Plan:
+    """The run's plan, or a plain failure that opens with `otherwise`."""
+    try:
+        return asyncio.run(plan_run(suite, provider, options))
+    except ProviderError as error:
+        _fail(f"{otherwise}: {error}")
 
 
 def _prepare(out_dir: Path) -> None:
@@ -153,25 +167,24 @@ def _prepare(out_dir: Path) -> None:
         _fail(f"can't keep runs in {str(out_dir)!r}: {error.strerror}")
 
 
-def _finish(suite: Suite, provider: Provider, folder: RunFolder) -> None:
+def _finish(suite: Suite, provider: Provider, folder: RunFolder, plan: Plan) -> None:
     """Run what the folder still needs, print the summary, and exit with how it went."""
     out.print(f"Keeping this run in {folder.path}", style="dim")
+    pick_up = f"Pick it up with: temper resume {folder.path}"
     try:
-        finished = asyncio.run(run_folder(suite, provider, folder))
+        finished = asyncio.run(complete_run(suite, provider, folder, plan))
     except KeyboardInterrupt:
-        _fail(
-            f"interrupted; what finished is kept. Pick it up with: temper resume {folder.path}",
-            code=INTERRUPTED,
+        _fail(f"interrupted; what finished is kept. {pick_up}", code=INTERRUPTED)
+    except Exception:
+        err.print(
+            f"Stopped by an unexpected error. What finished is kept. {pick_up}", style="yellow"
         )
-    except ProviderError as error:
-        if folder.is_empty:
-            shutil.rmtree(folder.path)
-            _fail(f"run stopped before it began, so nothing was kept: {error}")
-        _fail(f"run stopped: {error}. Pick it up with: temper resume {folder.path}")
+        raise
     render_run(finished, out)
     if finished.missing:
-        hint = f"Try the unanswered trials again with: temper resume {folder.path}"
-        err.print(hint, style="yellow")
+        err.print(
+            f"Try the unanswered trials again with: temper resume {folder.path}", style="yellow"
+        )
         raise typer.Exit(INCOMPLETE)
 
 
