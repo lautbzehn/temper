@@ -167,27 +167,23 @@ def render_calibration(suite: Suite, calibration: Calibration, console: Console)
         )
     console.print()
     bar = f"agreement at {TRUSTED:.0%} or better and kappa at {KAPPA} or better"
-    match calibration.trusted:
-        case None:
-            console.print(
-                Text(
-                    f"Too few labels to say: {calibration.labeled} of the {FLOOR} it takes.",
-                    style="yellow",
-                )
+    trusted = calibration.trusted
+    if trusted is None:
+        short = f"Too few labels to say: {calibration.labeled} of the {FLOOR} it takes."
+        console.print(Text(short, style="yellow"))
+    elif trusted:
+        console.print(
+            Text(f"Trusted: {plural(FLOOR, 'label')} or more, with {bar}.", style="green")
+        )
+    else:
+        console.print(
+            Text(
+                f"Not yet trusted: it takes {bar}. Read the disagreements, reword the "
+                "property or pick another judge, then run the suite again with --replay "
+                "to judge the same answers.",
+                style="yellow",
             )
-        case True:
-            console.print(
-                Text(f"Trusted: {plural(FLOOR, 'label')} or more, with {bar}.", style="green")
-            )
-        case False:
-            console.print(
-                Text(
-                    f"Not yet trusted: it takes {bar}. Read the disagreements, reword the "
-                    "property or pick another judge, then run the suite again with --replay "
-                    "to judge the same answers.",
-                    style="yellow",
-                )
-            )
+        )
 
 
 def _table(*columns: str | tuple[str, JustifyMethod]) -> Table:
