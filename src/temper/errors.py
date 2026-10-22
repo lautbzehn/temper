@@ -30,7 +30,22 @@ class UnknownNameError(LookupError):
 
 
 class ProviderError(Exception):
-    """A provider couldn't be set up, or couldn't answer."""
+    """A provider couldn't be set up or couldn't answer, and trying again wouldn't help."""
+
+
+class TransientError(ProviderError):
+    """A provider couldn't answer just now, but might on another try.
+
+    `retry_after` is how long the provider asked to wait, in seconds, when it said.
+    """
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        self.retry_after = retry_after
+        super().__init__(message)
+
+
+class RunError(Exception):
+    """A kept run that can't be used: its folder is incomplete, or its suite has changed."""
 
 
 class UnreadableFileError(Exception):

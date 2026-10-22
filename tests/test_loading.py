@@ -180,8 +180,48 @@ def test_a_missing_replies_file_is_reported_on_the_options(files: Files) -> None
 
     [(line, where, message)] = problems(path)
 
-    assert (line, where) == (5, "target.options")
+    assert (line, where) == (3, "target")
     assert message.startswith("can't read fake replies")
+
+
+def test_a_provider_that_needs_a_model_says_so(files: Files) -> None:
+    path = files.write("suite.yaml", VALID.replace("provider: fake", "provider: claude"))
+
+    assert (
+        problems(path)
+        == [
+            (5, "target.options", "unknown field; did you mean 'recording'?"),
+            (3, "target", "the claude provider needs target.model, for example claude-sonnet-5-5"),
+        ][1:]
+    )
+
+
+def test_a_replay_target_loads_its_recording(files: Files) -> None:
+    files.write("recording.jsonl", "")
+    text = VALID.replace("provider: fake", "provider: replay").replace(
+        "replies: replies.yaml", "recording: recording.jsonl"
+    )
+
+    assert load_suite(files.write("suite.yaml", text)).target.provider == "replay"
+
+
+def test_an_option_another_provider_takes_is_named_as_such(files: Files) -> None:
+    text = VALID.replace("provider: fake", "provider: claude\n  model: claude-sonnet-5-5")
+
+    assert problems(files.write("suite.yaml", text)) == [
+        (
+            7,
+            "target.options.replies",
+            "not an option of the claude provider, which takes effort, timeout_s",
+        )
+    ]
+
+
+def test_a_field_like_nothing_known_is_simply_unknown(files: Files) -> None:
+    files.write("replies.yaml", REPLIES)
+    text = VALID.replace("name: valid", "name: valid\nzzz: 1")
+
+    assert problems(files.write("suite.yaml", text)) == [(3, "zzz", "unknown field")]
 
 
 def test_a_system_prompt_file_is_read_into_the_target(files: Files) -> None:

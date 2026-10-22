@@ -3,17 +3,17 @@
 Typical use from Python::
 
     suite = temper.load_suite("examples/dunder-mifflin/suite.yaml")
-    provider = temper.build_provider(suite.target, Path("examples/dunder-mifflin"))
-    run = asyncio.run(temper.run_suite(suite, provider))
+    provider = temper.build_provider(suite.target, suite.folder)
+    run = asyncio.run(temper.run_suite(suite, provider, out=Path("runs")))
 """
 
 from importlib.metadata import version
 
-from temper.errors import ProviderError, SuiteError, UnknownNameError
+from temper.errors import ProviderError, RunError, SuiteError, TransientError, UnknownNameError
 from temper.loading import load_suite
 from temper.providers import build_provider
-from temper.results import Run, write_run
-from temper.runner import run_suite
+from temper.results import Run, RunFolder, RunOptions, TrialFailure, TrialResult
+from temper.runner import estimate_suite, open_run, provider_for, run_folder, run_suite, start_run
 from temper.suite import Suite
 
 __version__ = version("temper-evals")
@@ -21,12 +21,22 @@ __version__ = version("temper-evals")
 __all__ = [
     "ProviderError",
     "Run",
+    "RunError",
+    "RunFolder",
+    "RunOptions",
     "Suite",
     "SuiteError",
+    "TransientError",
+    "TrialFailure",
+    "TrialResult",
     "UnknownNameError",
     "__version__",
     "build_provider",
+    "estimate_suite",
     "load_suite",
+    "open_run",
+    "provider_for",
+    "run_folder",
     "run_suite",
-    "write_run",
+    "start_run",
 ]
