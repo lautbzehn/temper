@@ -74,7 +74,7 @@ convention = "google"
 runtime-evaluated-base-classes = [
     "pydantic.BaseModel",
     "temper.graders.Grader",
-    "temper.suite.Strict",
+    "temper.suite.Closed",
 ]
 
 [tool.mypy]
@@ -101,7 +101,7 @@ branch = true
 source = ["temper"]
 
 [tool.coverage.report]
-fail_under = 90
+fail_under = 100
 show_missing = true
 skip_covered = true
 exclude_also = ["if TYPE_CHECKING:", "@overload", "^\\s*\\.\\.\\.$"]

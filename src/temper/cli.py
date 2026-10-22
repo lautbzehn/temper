@@ -70,9 +70,14 @@ def run(
     concurrency: Annotated[int, typer.Option(min=1, help="Most trials in flight at once.")] = 8,
     out_dir: Annotated[Path, typer.Option("--out", help="Where each run is kept.")] = Path("runs"),
 ) -> None:
-    """Run every case in a suite, grade the answers, and keep the results."""
+    """Run every case in a suite, grade the answers, and keep the results.
+
+    Exits 0 whenever the run finishes and is kept, whatever the results; it
+    doesn't judge them yet.
+    """
     loaded = _load(suite)
-    provider = build_provider(loaded.target, suite.parent)
+    _prepare(out_dir)
+    provider = build_provider(loaded.target, loaded.folder)
     finished = _execute(loaded, provider, trials=trials, concurrency=concurrency)
     render_run(finished, write_run(finished, out_dir), out)
 
@@ -84,12 +89,20 @@ def _load(path: Path) -> Suite:
         _fail(*error.lines())
 
 
+def _prepare(out_dir: Path) -> None:
+    """Make sure the run can be kept before spending time on it."""
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        _fail(f"can't keep runs in {str(out_dir)!r}: {error.strerror}")
+
+
 def _execute(suite: Suite, provider: Provider, *, trials: int | None, concurrency: int) -> Run:
     try:
         return asyncio.run(run_suite(suite, provider, trials=trials, concurrency=concurrency))
     except ExceptionGroup as group:
-        failures = group.subgroup(ProviderError)
-        if failures is None:
+        failures, others = group.split(ProviderError)
+        if failures is None or others is not None:
             raise
         _fail(*(f"run stopped: {failure}" for failure in failures.exceptions))
 

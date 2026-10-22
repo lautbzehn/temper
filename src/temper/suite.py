@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -16,7 +17,9 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
-    PositiveInt,
+    PrivateAttr,
+    Strict,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -34,14 +37,17 @@ def _check_id(value: str) -> str:
 
 CaseId = Annotated[str, Field(max_length=64), AfterValidator(_check_id)]
 
+# A positive whole number, as written: YAML's `yes` and "3" are not quietly read as numbers.
+Count = Annotated[int, Strict(), Field(gt=0)]
 
-class Strict(BaseModel):
-    """A frozen model that rejects unknown fields, so a typo fails loudly instead of quietly."""
+
+class Closed(BaseModel):
+    """A frozen model closed to unknown fields, so a typo fails loudly instead of quietly."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class Message(Strict):
+class Message(Closed):
     """One turn of a conversation sent to the model under test."""
 
     role: Literal["user", "assistant"]
@@ -61,7 +67,7 @@ class Check(BaseModel):
         return dict(self.model_extra or {})
 
 
-class Case(Strict):
+class Case(Closed):
     """One scenario: what to ask, and what a good answer must do."""
 
     id: CaseId
@@ -84,14 +90,14 @@ class Case(Strict):
         return self.messages or ()
 
 
-class Target(Strict):
+class Target(Closed):
     """The system under test: which provider and model answer, and how they're prompted."""
 
     provider: str
     model: str | None = None
     system: str | None = None
     system_file: str | None = None
-    max_tokens: PositiveInt = 1024
+    max_tokens: Count = 1024
     options: dict[str, JsonValue] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -101,15 +107,32 @@ class Target(Strict):
         return self
 
 
-class Suite(Strict):
+class Suite(Closed):
     """A whole suite: the system under test, and the cases it has to pass."""
 
     schema_version: Literal[1] = Field(alias="schema")
     name: str
     description: str = ""
     target: Target
-    trials: PositiveInt = 1
+    trials: Count = 1
     cases: tuple[Case, ...] = Field(min_length=1)
+
+    _folder: Path = PrivateAttr(default_factory=Path)
+
+    @property
+    def folder(self) -> Path:
+        """The folder this suite's relative paths are read from.
+
+        That's the suite file's folder when it was loaded with `load_suite`,
+        which passes it as validation context, and the current folder otherwise.
+        """
+        return self._folder
+
+    @model_validator(mode="after")
+    def _remember_folder(self, info: ValidationInfo) -> Self:
+        if isinstance(info.context, dict) and "folder" in info.context:
+            self._folder = Path(info.context["folder"])
+        return self
 
     @field_validator("cases")
     @classmethod

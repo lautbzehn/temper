@@ -10,7 +10,7 @@ Owner: Dan West. Repo: `lautbzehn/temper`, private until v1.0. Roadmap: [docs/pl
 
 - Small modules with one job each, short functions, and names that say what things do.
 - Modern, idiomatic Python 3.11+. Fully typed. No `Any` in a public signature without a reason, and no `type: ignore` or `noqa` without a code and a reason.
-- `uv run ruff check`, `uv run ruff format --check`, `uv run mypy`, and `uv run pytest` all pass, and coverage stays at 90% or higher (it is 100% today).
+- `uv run ruff check`, `uv run ruff format --check`, `uv run mypy`, and `uv run pytest --cov` all pass, with coverage at 100%.
 - Docstrings say why, not what. Comments are rare and earn their place.
 - No dead code, no TODOs, no clever tricks.
 - Errors are written for people: what is wrong, where, and what to do about it.
@@ -34,6 +34,7 @@ Owner: Dan West. Repo: `lautbzehn/temper`, private until v1.0. Roadmap: [docs/pl
 
 - Never push straight to `main`. Pull requests are how CI guards the code.
 - Never put secrets in the repo or in chat. API keys come from the environment or `ant auth login`.
+- A Claude Code hook (`.claude/hooks/check-python.sh`) formats, lints, and type-checks every Python file Claude edits, and hands problems straight back.
 - Copy is plain, warm, and human, like explaining it over coffee. No em dashes.
 - Documents carry a version and date (`vX.X` and `mm.dd.yyyy`) in the file name and on the document.
 - Demo data is fictional: Dunder Mifflin, with The Office cast.
@@ -46,7 +47,7 @@ Owner: Dan West. Repo: `lautbzehn/temper`, private until v1.0. Roadmap: [docs/pl
 uv sync
 uv run temper validate examples/dunder-mifflin/suite.yaml
 uv run temper run examples/dunder-mifflin/suite.yaml
-uv run pytest
+uv run pytest --cov
 uv run ruff check && uv run ruff format --check
 uv run mypy
 ```
@@ -64,4 +65,5 @@ uv run mypy
 | `src/temper/summary.py` | The terminal summary |
 | `src/temper/cli.py` | The `temper` command, a thin layer over the library |
 | `src/temper/errors.py` | Every error a person might see |
+| `src/temper/files.py` | Reading files as UTF-8, with one kind of error for every way that fails |
 | `docs/adr/` | Decision notes: the context, the decision, and what it costs |

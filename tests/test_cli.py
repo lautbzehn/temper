@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-from temper import __version__
+from temper import ProviderError, __version__
 from temper.cli import app
 from tests.support import EXAMPLE
 
@@ -98,21 +98,39 @@ def test_run_reports_a_case_that_never_passed(files: Files) -> None:
 
     result = runner.invoke(app, ["run", str(path), "--out", str(files.root / "runs")])
 
+    assert result.exit_code == 0
     assert "0/2" in result.output
     assert "0 of 2 trials passed (0%)" in result.output
 
 
-def test_unexpected_errors_are_not_swallowed(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_run_stops_before_running_when_runs_cannot_be_kept(files: Files) -> None:
+    blocker = files.write("runs", "a file where the runs folder should be")
+
+    result = runner.invoke(app, ["run", str(EXAMPLE), "--out", str(blocker)])
+
+    assert result.exit_code == 1
+    assert f"can't keep runs in {str(blocker)!r}" in result.output
+
+
+@pytest.mark.parametrize(
+    "errors",
+    [
+        [RuntimeError("a real bug")],
+        [ProviderError("rate limited"), RuntimeError("a real bug")],
+    ],
+)
+def test_unexpected_errors_are_never_swallowed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, errors: list[Exception]
 ) -> None:
     async def broken(*_: object, **__: object) -> None:
-        raise ExceptionGroup("boom", [RuntimeError("not a provider problem")])
+        raise ExceptionGroup("boom", errors)
 
     monkeypatch.setattr("temper.cli.run_suite", broken)
 
     result = runner.invoke(app, ["run", str(EXAMPLE), "--out", str(tmp_path)])
 
     assert isinstance(result.exception, ExceptionGroup)
+    assert result.exception.subgroup(RuntimeError) is not None
 
 
 def test_python_dash_m_temper_runs_the_cli(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -49,8 +49,8 @@ def render_run(run: Run, folder: Path, console: Console) -> None:
     total = len(run.results)
     console.print(
         Text.assemble(
-            (f"{run.passed} of {plural(total, 'trial')} passed", "bold"),
-            f" ({run.passed / total:.0%}) · kept in {folder}",
+            (f"{run.trials_passed} of {plural(total, 'trial')} passed", "bold"),
+            f" ({run.trials_passed / total:.0%}) · kept in {folder}",
         )
     )
 

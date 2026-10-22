@@ -1,8 +1,8 @@
 """Graders turn an answer into a pass or a fail, with a reason a person can read.
 
 Each grader is a small validated model: its settings are its fields, and
-`grade` is a pure function of the answer. Text comparisons ignore case and
-spacing unless a check asks for exact case.
+`grade` is a pure function of the answer. Text comparisons collapse each run of
+whitespace to one space and ignore case, unless a check makes case count.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from typing_extensions import override
 
 from temper.errors import UnknownNameError
+from temper.suite import Closed
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -31,10 +32,8 @@ class Grade(BaseModel):
     reason: str
 
 
-class Grader(BaseModel, ABC):
+class Grader(Closed, ABC):
     """A check that can grade an answer. Its fields are its settings."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
     @abstractmethod
     def grade(self, answer: str) -> Grade:
@@ -42,7 +41,7 @@ class Grader(BaseModel, ABC):
 
 
 def normalize(text: str, *, case_sensitive: bool = False) -> str:
-    """Text as graders compare it: each run of whitespace becomes one space, and case is folded."""
+    """Text as graders compare it: runs of whitespace become one space, and case is folded."""
     spaced = " ".join(text.split())
     return spaced if case_sensitive else spaced.casefold()
 

@@ -30,7 +30,7 @@ def test_trials_group_by_case_in_suite_order() -> None:
 
 
 def test_a_run_counts_the_trials_that_passed() -> None:
-    assert sample_run().passed == 3
+    assert sample_run().trials_passed == 3
 
 
 def test_a_written_run_reads_back_the_same(tmp_path: Path) -> None:

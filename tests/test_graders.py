@@ -13,6 +13,10 @@ from temper.suite import Check
 
 words = st.text(alphabet=string.ascii_letters, min_size=1)
 some_text = st.text().filter(str.strip)
+plain_words = st.text(
+    alphabet=string.ascii_letters + string.digits + string.punctuation, min_size=1
+)
+spacing = st.text(alphabet=" \t\n", min_size=1)
 
 
 @pytest.mark.parametrize(
@@ -73,9 +77,15 @@ def test_contains_finds_text_wherever_it_sits(prefix: str, text: str, suffix: st
     assert Contains(text=text).grade(prefix + text + suffix).passed
 
 
-@given(answer=st.text(), text=some_text)
-def test_not_contains_is_exactly_the_opposite_of_contains(answer: str, text: str) -> None:
-    assert NotContains(text=text).grade(answer).passed != Contains(text=text).grade(answer).passed
+@given(answer=st.lists(plain_words, min_size=1), text=plain_words, gaps=st.data())
+def test_respacing_or_recasing_an_answer_never_changes_a_verdict(
+    answer: list[str], text: str, gaps: st.DataObject
+) -> None:
+    plain = " ".join(answer)
+    reworked = "".join(word.swapcase() + gaps.draw(spacing) for word in answer)
+
+    for grader in (Contains(text=text), NotContains(text=text), Equals(text=text)):
+        assert grader.grade(reworked).passed == grader.grade(plain).passed
 
 
 @given(st.lists(words, min_size=1))

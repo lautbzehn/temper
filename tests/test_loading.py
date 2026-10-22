@@ -135,10 +135,7 @@ def test_broken_yaml_points_at_the_line(files: Files) -> None:
 def test_a_file_that_is_not_a_mapping_is_rejected(files: Files) -> None:
     path = files.write("suite.yaml", "- just\n- a list\n")
 
-    [(line, where, message)] = problems(path)
-
-    assert (line, where) == (1, "")
-    assert "dictionary" in message
+    assert problems(path) == [(1, "", "expected a mapping of names to values")]
 
 
 def test_a_suite_needs_at_least_one_case(files: Files) -> None:
@@ -206,7 +203,9 @@ def test_a_missing_system_prompt_file_is_reported(files: Files) -> None:
         "suite.yaml", VALID.replace("provider: fake", "provider: fake\n  system_file: gone.md")
     )
 
-    assert problems(path) == [(5, "target.system_file", "can't find 'gone.md'")]
+    assert problems(path) == [
+        (5, "target.system_file", "can't read 'gone.md': No such file or directory")
+    ]
 
 
 def test_system_and_system_file_cannot_both_be_given(files: Files) -> None:
@@ -248,3 +247,107 @@ def test_a_check_without_a_type_is_reported_once(files: Files) -> None:
     path = files.write("suite.yaml", VALID.replace("type: contains", "kind: contains"))
 
     assert problems(path) == [(11, "cases[0].checks[0]", "missing required field 'type'")]
+
+
+def test_a_file_that_is_not_utf8_is_a_problem_not_a_crash(tmp_path: Path) -> None:
+    path = tmp_path / "suite.yaml"
+    path.write_bytes("name: Café\n".encode("latin-1"))
+
+    assert problems(path) == [(None, "", "can't read the file: it isn't UTF-8 text")]
+
+
+def test_a_control_character_is_a_problem_not_a_crash(files: Files) -> None:
+    [(line, where, message)] = problems(files.write("suite.yaml", "name: bell\x07\n"))
+
+    assert (line, where) == (None, "")
+    assert message.startswith("this isn't valid YAML: unacceptable character #x0007")
+
+
+def test_a_key_given_twice_is_reported_once(files: Files) -> None:
+    files.write("replies.yaml", REPLIES)
+    text = VALID.replace("name: valid", "name: valid\ntrials: 3\ntrials: 5")
+
+    assert problems(files.write("suite.yaml", text)) == [
+        (4, "trials", "given twice (first on line 3); YAML keeps only this one")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected"),
+    [
+        (
+            "name: valid",
+            "name: valid\nsystem: Hi",
+            (3, "system", "not a field here; it goes under target"),
+        ),
+        (
+            "input: Is this valid?",
+            "input: Is this valid?\n    model: fake-2",
+            (10, "cases[0].model", "not a field here; it goes under target"),
+        ),
+        (
+            "    checks:",
+            "    text: stray\n    checks:",
+            (10, "cases[0].text", "not a field here; it goes in a check"),
+        ),
+    ],
+)
+def test_a_field_in_the_wrong_place_says_where_it_goes(
+    files: Files, old: str, new: str, expected: tuple[int, str, str]
+) -> None:
+    files.write("replies.yaml", REPLIES)
+
+    assert problems(files.write("suite.yaml", VALID.replace(old, new))) == [expected]
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "where", "message"),
+    [
+        ("name: valid", "name: valid\ntrials: yes", "trials", "expected a whole number"),
+        (
+            'text: "yes"',
+            "text: 4471",
+            "cases[0].checks[0].text",
+            "expected text, but YAML read this as a number; put it in quotes",
+        ),
+        (
+            '    checks:\n      - type: contains\n        text: "yes"\n',
+            "    checks: contains\n",
+            "cases[0].checks",
+            "expected a list",
+        ),
+        (
+            "replies: replies.yaml",
+            "replies: replies.yaml\n    since: 2026-10-21",
+            "target.options.since",
+            "expected plain text, a number, true or false, a list, or a mapping",
+        ),
+    ],
+)
+def test_validation_errors_are_in_plain_words(
+    files: Files, old: str, new: str, where: str, message: str
+) -> None:
+    files.write("replies.yaml", REPLIES)
+
+    found = problems(files.write("suite.yaml", VALID.replace(old, new)))
+
+    assert [(w, m) for _, w, m in found] == [(where, message)]
+
+
+def test_a_system_prompt_file_that_is_not_utf8_is_reported(files: Files) -> None:
+    files.write("replies.yaml", REPLIES)
+    (files.root / "prompt.md").write_bytes("Café".encode("latin-1"))
+    path = files.write(
+        "suite.yaml", VALID.replace("provider: fake", "provider: fake\n  system_file: prompt.md")
+    )
+
+    assert problems(path) == [
+        (5, "target.system_file", "can't read 'prompt.md': it isn't UTF-8 text")
+    ]
+
+
+def test_a_loaded_suite_remembers_its_folder() -> None:
+    suite = load_suite(EXAMPLE)
+
+    assert suite.folder == EXAMPLE.parent
+    assert suite.model_copy().folder == EXAMPLE.parent

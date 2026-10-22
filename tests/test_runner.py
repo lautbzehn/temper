@@ -78,6 +78,14 @@ def test_the_fingerprint_changes_with_the_suite_and_only_then() -> None:
     assert fingerprint("a") != fingerprint("b")
 
 
+@pytest.mark.parametrize(("trials", "concurrency"), [(0, 1), (1, 0)])
+def test_trials_and_concurrency_must_be_positive(trials: int, concurrency: int) -> None:
+    suite = make_suite(case("only"))
+
+    with pytest.raises(ValueError, match="at least 1"):
+        asyncio.run(run_suite(suite, Slow(), trials=trials, concurrency=concurrency))
+
+
 def test_a_provider_failure_stops_the_run() -> None:
     suite = make_suite(case("answered"), case("unanswered"))
 

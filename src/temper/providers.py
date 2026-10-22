@@ -8,20 +8,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Annotated, Final, Protocol, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BeforeValidator, Field, TypeAdapter, ValidationError
 
-from temper.errors import ProviderError, UnknownNameError
-from temper.suite import CaseId, Message
+from temper.errors import ProviderError, UnknownNameError, UnreadableFileError
+from temper.files import read_text
+from temper.suite import CaseId, Closed, Message
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping
 
     from temper.suite import Target
-
-PROVIDERS = ("fake",)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -52,15 +51,19 @@ class Provider(Protocol):
         ...
 
 
-class FakeSettings(BaseModel):
+class FakeSettings(Closed):
     """Options for the fake provider: the file that holds its scripted replies."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
     replies: Path
 
 
-_REPLIES = TypeAdapter(dict[CaseId, str | list[str]])
+def _as_list(value: object) -> object:
+    return [value] if isinstance(value, str) else value
+
+
+# One reply, or a list of at least one, for each case id.
+_Replies = Annotated[list[str], BeforeValidator(_as_list), Field(min_length=1)]
+_REPLIES = TypeAdapter(dict[CaseId, _Replies])
 
 
 class FakeProvider:
@@ -70,29 +73,24 @@ class FakeProvider:
     so a short script can stand in for a model that isn't always consistent.
     """
 
-    def __init__(self, replies: Mapping[str, Sequence[str]]) -> None:
+    def __init__(self, replies: Mapping[str, list[str]]) -> None:
         self._replies = replies
 
     @classmethod
-    def from_file(cls, path: Path) -> FakeProvider:
+    def from_file(cls, path: Path) -> Self:
         """Read scripted replies from a YAML file that maps case ids to a reply or a list of them.
 
         Raises:
             ProviderError: the file can't be read or doesn't have that shape.
         """
         try:
-            replies = _REPLIES.validate_python(yaml.safe_load(path.read_text(encoding="utf-8")))
-        except OSError as error:
-            raise ProviderError(
-                f"can't read fake replies {str(path)!r}: {error.strerror}"
-            ) from None
+            return cls(_REPLIES.validate_python(yaml.safe_load(read_text(path))))
+        except UnreadableFileError as error:
+            raise ProviderError(f"can't read fake replies {str(path)!r}: {error.reason}") from None
         except (yaml.YAMLError, ValidationError):
             raise ProviderError(
                 f"fake replies in {str(path)!r} must map each case id to a reply or a list of them"
             ) from None
-        return cls(
-            {case: [reply] if isinstance(reply, str) else reply for case, reply in replies.items()}
-        )
 
     async def complete(self, request: Request) -> Completion:
         """Answer with the scripted reply for this case and trial."""
@@ -102,19 +100,25 @@ class FakeProvider:
         return Completion(text=replies[(request.trial - 1) % len(replies)], model="fake")
 
 
+def _fake(target: Target, base_dir: Path) -> FakeProvider:
+    settings = FakeSettings.model_validate(target.options)
+    return FakeProvider.from_file(base_dir / settings.replies)
+
+
+PROVIDERS: Final[Mapping[str, Callable[[Target, Path], Provider]]] = {"fake": _fake}
+
+
 def build_provider(target: Target, base_dir: Path) -> Provider:
     """The provider a suite's target names, set up from its options.
 
-    Paths in the options are read relative to `base_dir`, the suite file's folder.
+    Paths in the options are read relative to `base_dir`, usually `suite.folder`.
 
     Raises:
         UnknownNameError: no provider has that name.
         pydantic.ValidationError: the options don't fit that provider.
         ProviderError: the provider couldn't be set up.
     """
-    match target.provider:
-        case "fake":
-            settings = FakeSettings.model_validate(target.options)
-            return FakeProvider.from_file(base_dir / settings.replies)
-        case name:
-            raise UnknownNameError("provider", name, PROVIDERS)
+    build = PROVIDERS.get(target.provider)
+    if build is None:
+        raise UnknownNameError("provider", target.provider, PROVIDERS)
+    return build(target, base_dir)

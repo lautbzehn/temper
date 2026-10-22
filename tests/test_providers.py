@@ -58,6 +58,21 @@ def test_a_replies_file_of_the_wrong_shape_is_an_error(files: Files) -> None:
         FakeProvider.from_file(path)
 
 
+def test_an_empty_list_of_replies_is_an_error(files: Files) -> None:
+    path = files.write("replies.yaml", "silent: []\n")
+
+    with pytest.raises(ProviderError, match="must map each case id"):
+        FakeProvider.from_file(path)
+
+
+def test_a_replies_file_that_is_not_utf8_is_an_error(tmp_path: Path) -> None:
+    path = tmp_path / "replies.yaml"
+    path.write_bytes("case: Café\n".encode("latin-1"))
+
+    with pytest.raises(ProviderError, match="it isn't UTF-8 text"):
+        FakeProvider.from_file(path)
+
+
 def test_a_missing_replies_file_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(ProviderError, match="can't read fake replies"):
         FakeProvider.from_file(tmp_path / "gone.yaml")

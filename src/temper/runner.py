@@ -32,8 +32,15 @@ async def run_suite(
     At most `concurrency` trials wait on the provider at once. Results come
     back in suite order, case by case and trial by trial, whatever order they
     finish in.
+
+    Raises:
+        ValueError: `trials` or `concurrency` is less than 1.
+        ExceptionGroup: a provider couldn't answer. The run stops, and the group
+            holds each `ProviderError` that stopped it.
     """
     count = trials if trials is not None else suite.trials
+    if count < 1 or concurrency < 1:
+        raise ValueError("trials and concurrency must each be at least 1")
     limit = asyncio.Semaphore(concurrency)
     graders = {case.id: [build_grader(check) for check in case.checks] for case in suite.cases}
 

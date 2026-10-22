@@ -33,6 +33,15 @@ class ProviderError(Exception):
     """A provider couldn't be set up, or couldn't answer."""
 
 
+class UnreadableFileError(Exception):
+    """A file that couldn't be read as UTF-8 text, and why, in words a person can act on."""
+
+    def __init__(self, path: Path, reason: str) -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(f"can't read {str(path)!r}: {reason}")
+
+
 @dataclass(frozen=True, slots=True)
 class Problem:
     """One thing wrong with a suite file, and where it is."""

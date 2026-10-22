@@ -7,7 +7,8 @@ A suite file is where people spend their time with Temper. It needs to be easy t
 
 ## Decision
 - Suites are YAML, which reads well and diffs cleanly.
-- Every model rejects unknown fields, so `trails: 3` is an error with a suggestion, not a silently ignored typo.
+- Every model is closed to unknown fields, so `trails: 3` is an error with a suggestion, not a silently ignored typo.
+- Counts are read as written: `trials: yes` or `trials: "3"` is an error, not a quiet conversion to a number.
 - Each check names its grader explicitly, `type: contains`, and everything else in the check belongs to that grader. That keeps the suite format small and lets graders, including future plugins, own their settings.
 - A case asks with exactly one of `input` or `messages`. A target takes exactly one of `system` or `system_file`.
 - `schema: 1` is required and frozen against breaking changes. New optional fields may arrive; nothing a valid suite says today will stop meaning what it means.

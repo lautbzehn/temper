@@ -58,7 +58,7 @@ class Run(BaseModel):
     results: tuple[TrialResult, ...]
 
     @property
-    def passed(self) -> int:
+    def trials_passed(self) -> int:
         """How many trials passed every check."""
         return sum(result.passed for result in self.results)
 
