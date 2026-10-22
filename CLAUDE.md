@@ -16,7 +16,7 @@ Owner: Dan West. Repo: `lautbzehn/temper`, private until v1.0. Roadmap: [docs/pl
 - Errors are written for people: what is wrong, where, and what to do about it.
 - Before each milestone's hard stop: an editor's pass to simplify, then a fresh-eyes review that asks whether a senior Python engineer would be impressed.
 
-## Eval honesty, from M1 on
+## Eval honesty
 
 - Plumbing failures (timeouts, rate limits, crashes) are kept apart from wrong answers and never scored as the model's fault.
 - Cut-off answers and refusals get labels of their own.
@@ -47,6 +47,7 @@ Owner: Dan West. Repo: `lautbzehn/temper`, private until v1.0. Roadmap: [docs/pl
 uv sync
 uv run temper validate examples/dunder-mifflin/suite.yaml
 uv run temper run examples/dunder-mifflin/suite.yaml
+uv run temper run examples/dunder-mifflin/suite.yaml --dry-run
 uv run pytest --cov
 uv run ruff check && uv run ruff format --check
 uv run mypy
@@ -59,10 +60,11 @@ uv run mypy
 | `src/temper/suite.py` | The suite format, schema version 1 (frozen against breaking changes) |
 | `src/temper/loading.py` | YAML to a validated suite, with every problem at its line |
 | `src/temper/graders.py` | Checks: validated models with a pure `grade` method |
-| `src/temper/providers.py` | Where answers come from: the `Provider` protocol and the fake provider |
-| `src/temper/runner.py` | Async runs under a concurrency limit, results in suite order |
-| `src/temper/results.py` | Run records, and how they are written to disk |
-| `src/temper/summary.py` | The terminal summary |
+| `src/temper/providers/` | Where answers come from: the `Provider` protocol (`base.py`), and the `claude`, `fake`, and `replay` providers |
+| `src/temper/pricing.py` | List prices, and what a `Usage` costs |
+| `src/temper/runner.py` | Async runs: retries, time limits, budget, served-model check, resume |
+| `src/temper/results.py` | The run folder: `results.jsonl`, `errors.jsonl`, `recording.jsonl`, and `manifest.json` |
+| `src/temper/summary.py` | The terminal summary, and the dry-run estimate |
 | `src/temper/cli.py` | The `temper` command, a thin layer over the library |
 | `src/temper/errors.py` | Every error a person might see |
 | `src/temper/files.py` | Reading files as UTF-8, with one kind of error for every way that fails |

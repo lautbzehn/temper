@@ -26,7 +26,7 @@ from temper.errors import (
 )
 from temper.files import read_text
 from temper.graders import GRADERS, build_grader
-from temper.providers import FakeSettings, build_provider
+from temper.providers import SETTINGS, build_provider
 from temper.suite import Case, Check, Message, Suite, Target
 
 if TYPE_CHECKING:
@@ -37,6 +37,9 @@ if TYPE_CHECKING:
 
 Loc = tuple[str | int, ...]
 Marks = dict[Loc, yaml.Mark]
+Places = dict[Loc, tuple[str, frozenset[str]]]
+
+_OPTIONS: Final[Loc] = ("target", "options")
 
 
 def _field_names(*models: type[BaseModel]) -> frozenset[str]:
@@ -45,39 +48,54 @@ def _field_names(*models: type[BaseModel]) -> frozenset[str]:
     )
 
 
-# Each kind of mapping in a suite: where it sits (list positions left out), how to
-# say so, and the fields it takes. Used to suggest a fix for an unknown field.
-_PLACES: Final[dict[Loc, tuple[str, frozenset[str]]]] = {
-    (): ("at the top level", _field_names(Suite)),
-    ("target",): ("under target", _field_names(Target)),
-    ("target", "options"): ("under target.options", _field_names(FakeSettings)),
-    ("cases",): ("in a case", _field_names(Case)),
-    ("cases", "messages"): ("in a message", _field_names(Message)),
-    ("cases", "checks"): ("in a check", _field_names(Check, *GRADERS.values())),
-}
+def _places(provider: str | None) -> Places:
+    """Each kind of mapping in a suite, by where it sits: how to say so, and its fields.
+
+    List positions are left out of the places. The options are the named
+    provider's own, or every provider's when the name isn't known.
+    """
+    known = SETTINGS.get(provider) if provider is not None else None
+    settings = [known] if known is not None else list(SETTINGS.values())
+    return {
+        (): ("at the top level", _field_names(Suite)),
+        ("target",): ("under target", _field_names(Target)),
+        _OPTIONS: ("under target.options", _field_names(*settings)),
+        ("cases",): ("in a case", _field_names(Case)),
+        ("cases", "messages"): ("in a message", _field_names(Message)),
+        ("cases", "checks"): ("in a check", _field_names(Check, *GRADERS.values())),
+    }
 
 
 @dataclass(frozen=True, slots=True)
 class _Document:
-    """A parsed suite file: its data, where each location starts, and any key given twice."""
+    """A parsed suite file.
+
+    Its data, where each location starts, which provider it names, and any key
+    it gives twice.
+    """
 
     data: object
     marks: Marks
+    provider: str | None
     repeated: list[Problem]
+
+    @property
+    def places(self) -> Places:
+        return _places(self.provider)
 
 
 def load_suite(path: str | PathLike[str]) -> Suite:
     """Load a suite file and check it, reporting every problem at once.
 
-    The suite remembers its file's folder as `suite.folder`, where its relative
-    paths are read from.
+    The suite remembers its file as `suite.path`, and its folder, where its
+    relative paths are read from, as `suite.folder`.
 
     Raises:
         SuiteError: the file can't be read, isn't valid YAML, or doesn't describe a usable suite.
     """
     source = Path(path)
     document = _parse(source)
-    suite, shape = _validate(document, source.parent)
+    suite, shape = _validate(document, source)
     system, target = _check_target(document, source.parent)
     problems = [*shape, *document.repeated, *_check_problems(document), *target]
     if suite is None or problems:
@@ -129,7 +147,14 @@ def _document(data: object, root: yaml.Node) -> _Document:
             message = f"given twice (first on line {earlier.line + 1}); YAML keeps only this one"
             repeated[loc] = Problem(_where(loc), message, mark.line + 1, mark.column + 1)
         marks[loc] = mark
-    return _Document(data, marks, list(repeated.values()))
+    provider = _entry(_entry(data, "target"), "provider")
+    return _document_of(data, marks, provider, list(repeated.values()))
+
+
+def _document_of(
+    data: object, marks: Marks, provider: object, repeated: list[Problem]
+) -> _Document:
+    return _Document(data, marks, provider if isinstance(provider, str) else None, repeated)
 
 
 def _marks(node: yaml.Node, loc: Loc = ()) -> Iterator[tuple[Loc, yaml.Mark]]:
@@ -144,13 +169,13 @@ def _marks(node: yaml.Node, loc: Loc = ()) -> Iterator[tuple[Loc, yaml.Mark]]:
             yield from _marks(item, (*loc, index))
 
 
-def _validate(document: _Document, folder: Path) -> tuple[Suite | None, list[Problem]]:
+def _validate(document: _Document, path: Path) -> tuple[Suite | None, list[Problem]]:
     """The suite, if its shape is right, and the problems with its shape if not."""
     try:
-        return Suite.model_validate(document.data, context={"folder": folder}), []
+        return Suite.model_validate(document.data, context={"path": path}), []
     except ValidationError as error:
         errors = _explained(error.errors())
-        return None, [_problem(details, document.marks) for details in errors]
+        return None, [_problem(details, document) for details in errors]
 
 
 def _explained(errors: list[ErrorDetails]) -> list[ErrorDetails]:
@@ -165,13 +190,13 @@ def _explained(errors: list[ErrorDetails]) -> list[ErrorDetails]:
     return [error for error in errors if not is_echo(error)]
 
 
-def _problem(details: ErrorDetails, marks: Marks, prefix: Loc = ()) -> Problem:
+def _problem(details: ErrorDetails, document: _Document, prefix: Loc = ()) -> Problem:
     """A Pydantic error, retold in plain words at the nearest line."""
-    where, message = _describe((*prefix, *details["loc"]), details)
-    return _at(where, message, marks)
+    where, message = _describe((*prefix, *details["loc"]), details, document)
+    return _at(where, message, document.marks)
 
 
-def _describe(loc: Loc, details: ErrorDetails) -> tuple[Loc, str]:
+def _describe(loc: Loc, details: ErrorDetails, document: _Document) -> tuple[Loc, str]:
     """Plain words for a validation error, and the location they're about.
 
     A missing field is about the mapping it's missing from; anything else is
@@ -179,7 +204,7 @@ def _describe(loc: Loc, details: ErrorDetails) -> tuple[Loc, str]:
     """
     if details["type"] == "missing":
         return loc[:-1], f"missing required field {loc[-1]!r}"
-    return loc, _message(loc, details)
+    return loc, _message(loc, details, document)
 
 
 # Pydantic error types whose plain-words message doesn't depend on the value.
@@ -196,11 +221,11 @@ _PLAIN: Final = {
 }
 
 
-def _message(loc: Loc, details: ErrorDetails) -> str:
+def _message(loc: Loc, details: ErrorDetails, document: _Document) -> str:
     found = details["input"]
     match details["type"]:
         case "extra_forbidden":
-            message = _unknown_field(loc)
+            message = _unknown_field(loc, document)
         case "too_short":
             least = details.get("ctx", {}).get("min_length", 1)
             message = f"needs at least {'one entry' if least == 1 else f'{least} entries'}"
@@ -214,18 +239,24 @@ def _message(loc: Loc, details: ErrorDetails) -> str:
     return message
 
 
-def _unknown_field(loc: Loc) -> str:
+def _unknown_field(loc: Loc, document: _Document) -> str:
     """Why a field isn't allowed where it is: it belongs somewhere else, or it's a typo."""
     name = str(loc[-1])
     here = tuple(part for part in loc[:-1] if isinstance(part, str))
-    homes = [
-        label for place, (label, fields) in _PLACES.items() if name in fields and place != here
-    ]
+    places = document.places
+    homes = [label for place, (label, fields) in places.items() if name in fields and place != here]
     if homes:
         return f"not a field here; it goes {homes[0]}"
-    _, fields = _PLACES.get(here, ("", frozenset()))
-    guess = closest(name, fields)
-    return f"unknown field; did you mean {guess!r}?" if guess else "unknown field"
+    _, fields = places.get(here, ("", frozenset()))
+    if guess := closest(name, fields):
+        return f"unknown field; did you mean {guess!r}?"
+    if here == _OPTIONS and document.provider in SETTINGS:
+        return f"not an option of the {document.provider} provider, which takes {_listed(fields)}"
+    return "unknown field"
+
+
+def _listed(names: frozenset[str]) -> str:
+    return ", ".join(sorted(names))
 
 
 def _at(loc: Loc, message: str, marks: Marks) -> Problem:
@@ -256,7 +287,7 @@ def _check_problems(document: _Document) -> Iterator[Problem]:
             except UnknownNameError as error:
                 yield _at((*here, "type"), str(error), document.marks)
             except ValidationError as error:
-                yield from (_problem(details, document.marks, here) for details in error.errors())
+                yield from (_problem(details, document, here) for details in error.errors())
 
 
 def _check_target(document: _Document, base_dir: Path) -> tuple[str | None, list[Problem]]:
@@ -283,9 +314,9 @@ def _check_target(document: _Document, base_dir: Path) -> tuple[str | None, list
     except UnknownNameError as error:
         problems.append(_at(("target", "provider"), str(error), marks))
     except ValidationError as error:
-        problems += (_problem(details, marks, ("target", "options")) for details in error.errors())
+        problems += (_problem(details, document, _OPTIONS) for details in error.errors())
     except ProviderError as error:
-        problems.append(_at(("target", "options"), str(error), marks))
+        problems.append(_at(("target",), str(error), marks))
     return system, problems
 
 

@@ -117,21 +117,25 @@ class Suite(Closed):
     trials: Count = 1
     cases: tuple[Case, ...] = Field(min_length=1)
 
-    _folder: Path = PrivateAttr(default_factory=Path)
+    _path: Path | None = PrivateAttr(default=None)
+
+    @property
+    def path(self) -> Path | None:
+        """The file this suite was loaded from, or None for a suite built in code.
+
+        `load_suite` passes the path as validation context.
+        """
+        return self._path
 
     @property
     def folder(self) -> Path:
-        """The folder this suite's relative paths are read from.
-
-        That's the suite file's folder when it was loaded with `load_suite`,
-        which passes it as validation context, and the current folder otherwise.
-        """
-        return self._folder
+        """The folder this suite's relative paths are read from: its file's, or the current one."""
+        return self._path.parent if self._path is not None else Path()
 
     @model_validator(mode="after")
-    def _remember_folder(self, info: ValidationInfo) -> Self:
-        if isinstance(info.context, dict) and "folder" in info.context:
-            self._folder = Path(info.context["folder"])
+    def _remember_path(self, info: ValidationInfo) -> Self:
+        if isinstance(info.context, dict) and "path" in info.context:
+            self._path = Path(info.context["path"])
         return self
 
     @field_validator("cases")
