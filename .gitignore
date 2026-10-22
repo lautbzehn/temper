@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Tool caches
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+
+# Temper run output
+runs/
+
+# Local only
+.env
+.DS_Store
+.claude/settings.local.json
+
+# Claude Code session state (the tracker panel reads it locally)
+.claude/tracker.json
