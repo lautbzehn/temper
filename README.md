@@ -187,7 +187,16 @@ broken.yaml:20:5: cases[2]: missing required field 'checks'
 broken.yaml:22:5: cases[2].input: given twice (first on line 21); YAML keeps only this one
 ```
 
-Two of those are classic YAML traps. An unquoted `no`, `yes`, `on`, or `off` is read as true or false, not as text. And YAML quietly keeps the last of two equal keys, so Temper refuses the file instead of guessing which one you meant. A file that isn't UTF-8 text, or has a stray control character in it, gets a plain message too, never a traceback.
+Two of those are classic YAML traps. An unquoted `no`, `yes`, `on`, or `off` is read as true or false, not as text. And YAML quietly keeps the last of two equal keys, so Temper refuses the file instead of guessing which one you meant.
+
+A third trap is one Temper can't catch, because the file is perfectly good YAML. A space followed by `#` starts a comment, so everything after it on that line is thrown away:
+
+```yaml
+input: Where is order #4471?      # sends only "Where is order"
+input: "Where is order #4471?"    # sends the whole question
+```
+
+Quote the text, or write it as a block with `>-` the way the example suite does. Temper's own pilot fell into this one, so if an answer seems to reply to half a question, look here first. A file that isn't UTF-8 text, or has a stray control character in it, gets a plain message too, never a traceback.
 
 ## Use it from Python
 

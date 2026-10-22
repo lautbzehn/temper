@@ -2,6 +2,18 @@
 
 All notable changes to Temper. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] · 10.22.2026
+
+The first real labeling session found that `temper label` cropped the answers it asked about.
+
+### Fixed
+
+- `temper label` shows every answer in full. The command's console leaves long lines for the terminal to wrap, which is right for paths you might copy, but inside the answer's box Rich crops them instead, so each paragraph was cut at the box's edge. The labeling screen now wraps its text itself. The labeling tests now use a console set up the way the command's is, and a long answer must show whole.
+
+### Docs
+
+- The README names a YAML trap Temper can't catch: a space followed by `#` starts a comment, so an unquoted question with an order number in it loses everything from the `#` on. The judge pilot's own suite had it.
+
 ## [0.3.0] · 10.22.2026
 
 Graders you can trust: more checks, checks of your own, and a judge that is measured before it is believed.

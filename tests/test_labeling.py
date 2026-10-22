@@ -37,10 +37,10 @@ def session(
     for label in done:
         labels.add(label)
     buffer = io.StringIO()
+    # Set up as the command line's console is, which leaves long lines for the terminal to wrap.
+    console = Console(file=buffer, width=80, soft_wrap=True)
     replies = iter(typed)
-    outcome = label_run(
-        suite, finished, labels, Console(file=buffer, width=80), ask=lambda _: next(replies)
-    )
+    outcome = label_run(suite, finished, labels, console, ask=lambda _: next(replies))
     return labels, outcome, buffer.getvalue()
 
 
@@ -77,6 +77,14 @@ def test_each_judged_answer_is_shown_and_its_label_kept(tmp_path: Path) -> None:
     assert "user: A question for a" in shown
     assert "Sorry!" in shown
     assert "Property: apologizes" in shown
+
+
+def test_a_long_answer_is_shown_whole_however_narrow_the_terminal(tmp_path: Path) -> None:
+    words = [f"word{n}" for n in range(60)]
+
+    _, _, shown = session(tmp_path, "y", "y", second=answer(" ".join(words)))
+
+    assert all(word in shown for word in words)
 
 
 def test_the_person_never_sees_what_the_judge_said(tmp_path: Path) -> None:

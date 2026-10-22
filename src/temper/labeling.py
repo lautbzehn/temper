@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
 
@@ -90,11 +91,18 @@ def label_run(
 
 
 def _show(console: Console, result: TrialResult, property_: str, progress: str) -> None:
+    """Draw one answer to label, wrapped whatever the console's own setting.
+
+    A console that leaves long lines for the terminal to wrap crops them
+    inside a box instead, and a cropped answer can't be judged.
+    """
+    turns = [
+        Text.assemble((f"{turn.role}: ", "bold"), turn.content) for turn in result.request.messages
+    ]
+    answer = Panel(Text(result.completion.text), title="answer", title_align="left")
+    asked = Text.assemble(("Property: ", "bold"), property_)
     console.rule(f"{result.case_id} · trial {result.trial} · {progress}")
-    for turn in result.request.messages:
-        console.print(Text.assemble((f"{turn.role}: ", "bold"), turn.content))
-    console.print(Panel(Text(result.completion.text), title="answer", title_align="left"))
-    console.print(Text.assemble(("Property: ", "bold"), property_))
+    console.print(Group(*turns, answer, asked), soft_wrap=False)
 
 
 def _choice(ask: Callable[[str], str]) -> str:
