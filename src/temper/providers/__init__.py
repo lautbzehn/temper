@@ -1,4 +1,4 @@
-"""Where answers come from: the providers, and how a suite's target picks one."""
+"""Where answers come from: the providers, and how a suite's target and judge each pick one."""
 
 from __future__ import annotations
 
@@ -6,16 +6,25 @@ from typing import TYPE_CHECKING, Final
 
 from temper.errors import UnknownNameError
 from temper.providers import claude, fake, replay
-from temper.providers.base import Completion, Provider, Request, Status, Usage
+from temper.providers.base import (
+    Completion,
+    Provider,
+    Request,
+    Slot,
+    Status,
+    Usage,
+    same_model,
+    served_matches,
+)
 from temper.providers.claude import ClaudeProvider, ClaudeSettings
 from temper.providers.fake import FakeProvider, FakeSettings
-from temper.providers.replay import Recording, ReplayProvider, ReplaySettings, Slot
+from temper.providers.replay import Recording, ReplayProvider, ReplaySettings
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from pathlib import Path
 
-    from temper.suite import Closed, Target
+    from temper.suite import Closed, Judge, Target
 
 PROVIDERS: Final[Mapping[str, Callable[[Target, Path], Provider]]] = {
     "claude": claude.build,
@@ -46,6 +55,15 @@ def build_provider(target: Target, base_dir: Path) -> Provider:
     return build(target, base_dir)
 
 
+def build_judge(judge: Judge) -> Provider:
+    """The provider the judge's verdicts come from: Claude, set up from the suite's `judge.options`.
+
+    Raises:
+        pydantic.ValidationError: the options aren't the Claude provider's.
+    """
+    return ClaudeProvider.from_settings(ClaudeSettings.model_validate(judge.options))
+
+
 __all__ = [
     "PROVIDERS",
     "SETTINGS",
@@ -62,5 +80,8 @@ __all__ = [
     "Slot",
     "Status",
     "Usage",
+    "build_judge",
     "build_provider",
+    "same_model",
+    "served_matches",
 ]

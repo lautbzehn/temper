@@ -4,30 +4,28 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import aclosing, contextmanager
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
 from rich.console import Console
 
-from temper import __version__
-from temper.errors import ProviderError, RunError, SuiteError
+from temper import __version__, calibration
+from temper.errors import PluginError, ProviderError, RunError, SuiteError
+from temper.labeling import label_run
+from temper.labels import Labels
 from temper.loading import load_suite
+from temper.planning import estimate_suite, plan_run, providers_for
 from temper.results import RunOptions
-from temper.runner import (
-    complete_run,
-    estimate_suite,
-    plan_run,
-    provider_for,
-    reopen_run,
-    start_run,
-)
-from temper.summary import plural, render_estimate, render_run
+from temper.runner import complete_run, reopen_run, start_run
+from temper.summary import render_calibration, render_estimate, render_run
+from temper.wording import plural
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from temper.providers import Provider
+    from temper.planning import Plan, Providers
     from temper.results import Run, RunFolder
     from temper.suite import Suite
 
@@ -81,13 +79,13 @@ def run(
     trials: Annotated[
         int | None, typer.Option(min=1, help="Trials per case. Defaults to the suite's own.")
     ] = None,
-    concurrency: Annotated[int, typer.Option(min=1, help="Most trials in flight at once.")] = 8,
+    concurrency: Annotated[int, typer.Option(min=1, help="Most requests in flight at once.")] = 8,
     time_limit: Annotated[
         float,
-        typer.Option("--time-limit", min=1, help="Seconds a trial may take, retries included."),
+        typer.Option("--time-limit", min=1, help="Seconds one request may take, retries included."),
     ] = 120.0,
     attempts: Annotated[
-        int, typer.Option(min=1, help="Tries per trial before giving up on a passing problem.")
+        int, typer.Option(min=1, help="Tries per request before giving up on a passing problem.")
     ] = 4,
     budget: Annotated[
         float | None, typer.Option("--budget", min=0.01, help="Dollars the run may spend.")
@@ -95,7 +93,9 @@ def run(
     replay: Annotated[
         Path | None,
         typer.Option(
-            "--replay", help="Answer from this recording instead of the suite's provider."
+            "--replay",
+            help="Answer from this recording instead of the suite's provider. Verdicts it "
+            "holds are replayed too; any it lacks are judged live.",
         ),
     ] = None,
     out_dir: Annotated[Path, typer.Option("--out", help="Where each run is kept.")] = Path("runs"),
@@ -106,7 +106,7 @@ def run(
     """Run every case in a suite, grade the answers, and keep the results.
 
     Exits 0 when every trial was answered, and 2 when some weren't, in which
-    case `temper resume` can try them again. The results aren't judged yet.
+    case `temper resume` can try them again.
     """
     options = RunOptions(
         trials=trials,
@@ -118,17 +118,17 @@ def run(
     )
     with _plain_errors():
         loaded = load_suite(suite)
-        provider = provider_for(loaded, options)
+        providers = providers_for(loaded, options)
     if dry_run:
-        _estimate(loaded, provider, options)
+        _estimate(loaded, providers, options)
         return
 
     def fresh() -> RunFolder:
         _prepare(out_dir)
-        return start_run(loaded, provider, out=out_dir, options=options)
+        return start_run(loaded, providers, out=out_dir, options=options)
 
     _drive(
-        loaded, provider, options, fresh, before="run stopped before it began, so nothing was kept"
+        loaded, providers, options, fresh, before="run stopped before it began, so nothing was kept"
     )
 
 
@@ -137,13 +137,57 @@ def resume(folder: RunDir) -> None:
     """Pick up a kept run, answering only the trials that still have no answer."""
     with _plain_errors():
         loaded, opened = reopen_run(folder)
-        provider = provider_for(loaded, opened.manifest.options)
+        providers = providers_for(loaded, opened.manifest.options)
 
     def picked_up() -> RunFolder:
         opened.resume()
         return opened
 
-    _drive(loaded, provider, opened.manifest.options, picked_up, before="the run wasn't picked up")
+    _drive(loaded, providers, opened.manifest.options, picked_up, before="the run wasn't picked up")
+
+
+@app.command()
+def label(folder: RunDir) -> None:
+    """Label a kept run's judged answers by hand, blind to the judge, so it can be calibrated."""
+    with _plain_errors():
+        loaded, opened = reopen_run(folder)
+        try:
+            ask = partial(out.input, markup=False, emoji=False)
+            outcome = label_run(loaded, opened.run(), Labels.of(opened.path), out, ask=ask)
+        except (KeyboardInterrupt, EOFError):
+            _fail("stopped; every label given so far is kept", code=INTERRUPTED)
+    if not outcome.total:
+        out.print("Nothing to label: every judged answer in this run has a label already.")
+    elif outcome.left:
+        out.print(
+            f"{plural(outcome.labeled, 'label')} added, {outcome.left} to go. "
+            f"Pick it up with: temper label {folder}"
+        )
+    else:
+        out.print(
+            f"{plural(outcome.labeled, 'label')} added; every judged answer is labeled. "
+            f"Next: temper calibrate {folder}"
+        )
+
+
+@app.command()
+def calibrate(
+    folder: RunDir,
+    *,
+    labels: Annotated[
+        Path | None,
+        typer.Option("--labels", help="A labels file to compare with, when not the run's own."),
+    ] = None,
+) -> None:
+    """Measure how often the judge agreed with your labels, and show every disagreement."""
+    if labels is not None and not labels.exists():
+        _fail(f"no labels file at {str(labels)!r}")
+    with _plain_errors():
+        loaded, opened = reopen_run(folder)
+        done = (Labels(labels) if labels is not None else Labels.of(opened.path)).read()
+    if not done:
+        _fail(f"no labels to compare with; make some with: temper label {folder}")
+    render_calibration(loaded, calibration.calibrate(loaded, opened.run(), done), out)
 
 
 @contextmanager
@@ -153,7 +197,7 @@ def _plain_errors() -> Iterator[None]:
         yield
     except SuiteError as error:
         _fail(*error.lines())
-    except (ProviderError, RunError) as error:
+    except (PluginError, ProviderError, RunError) as error:
         _fail(str(error))
 
 
@@ -165,21 +209,21 @@ def _prepare(out_dir: Path) -> None:
         _fail(f"can't keep runs in {str(out_dir)!r}: {error.strerror}")
 
 
-def _estimate(suite: Suite, provider: Provider, options: RunOptions) -> None:
-    """Count every case's tokens and print what the run could cost, at most."""
+def _estimate(suite: Suite, providers: Providers, options: RunOptions) -> None:
+    """Count every request's tokens and print what the run could cost, at most."""
 
-    async def counted() -> dict[str, int]:
-        async with aclosing(provider):
-            return await estimate_suite(suite, provider, options)
+    async def counted() -> Plan:
+        async with aclosing(providers):
+            return await estimate_suite(suite, providers, options)
 
     with _plain_errors():
-        estimates = asyncio.run(counted())
-    render_estimate(suite, estimates, options, out, charges=provider.charges)
+        plan = asyncio.run(counted())
+    render_estimate(plan, options, out)
 
 
 def _drive(
     suite: Suite,
-    provider: Provider,
+    providers: Providers,
     options: RunOptions,
     folder_once_planned: Callable[[], RunFolder],
     *,
@@ -187,18 +231,18 @@ def _drive(
 ) -> None:
     """Plan the run, open its folder, and answer it, then print how it went and exit to match.
 
-    All of it happens in one event loop and closes the provider at the end, so
-    a connection the preflight opened is still good when the trials need it.
+    All of it happens in one event loop and closes the providers at the end,
+    so a connection the preflight opened is still good when the trials need it.
     """
     folder: RunFolder | None = None
 
     async def driven() -> Run:
         nonlocal folder
-        async with aclosing(provider):
-            plan = await plan_run(suite, provider, options)
+        async with aclosing(providers):
+            plan = await plan_run(suite, providers, options)
             folder = folder_once_planned()
             out.print(f"Keeping this run in {folder.path}", style="dim")
-            return await complete_run(suite, provider, folder, plan)
+            return await complete_run(plan, folder)
 
     try:
         finished = asyncio.run(driven())

@@ -1,9 +1,11 @@
 """Running a suite: every case and trial side by side, each answer graded and kept as it lands.
 
 The runner owns the retries, the time limit, and the budget, so a provider only
-has to answer or say why it can't. Whatever becomes of an attempt is written
-down: an answer with its grades, or a failure with its reason. A failure is
-never scored as a wrong answer.
+has to answer or say why it can't. A judge's verdict is asked for the way an
+answer is, through the same limits. Whatever becomes of a request is written
+down: an answer with its grades, a verdict with its cost, or a failure with its
+reason. A failure is never scored as a wrong answer, and a verdict that never
+came is never a failed check.
 """
 
 from __future__ import annotations
@@ -18,38 +20,37 @@ from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from importlib.metadata import version
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
+from temper import judge
+from temper.checks import build_check
 from temper.errors import ProviderError, RunError, TransientError
-from temper.graders import build_grader
+from temper.graders import Answer, Grader
 from temper.loading import load_suite
-from temper.pricing import PRICED_ON, cost_usd, price_of
-from temper.providers import ReplayProvider, Request, Usage, build_provider
+from temper.planning import Plan, Providers, answer_request, plan_run, providers_for
+from temper.pricing import PRICED_ON, cost_usd
+from temper.providers import served_matches
 from temper.results import Manifest, Retry, RunFolder, RunOptions, TrialFailure, TrialResult
+from temper.wording import dollars
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
     from pathlib import Path
 
-    from temper.graders import Grader
-    from temper.providers import Completion, Provider
+    from temper.graders import Grade, JudgeCheck
+    from temper.providers import Completion, Provider, ReplayProvider, Request
     from temper.results import FailureKind, Run
     from temper.suite import Case, Suite
 
 BACKOFF_CAP_S = 30.0
 
-
-@dataclass(frozen=True, slots=True)
-class Plan:
-    """What a run knows before it starts: each case's input tokens, and the budget it will hold."""
-
-    estimates: Mapping[str, int]
-    budget_usd: float | None
+# Where a completion came from: the run's own recording, the recording it replays, or a provider.
+Source = Literal["own", "replay", "live"]
 
 
 async def run_suite(
     suite: Suite,
-    provider: Provider,
+    providers: Providers,
     *,
     out: Path,
     options: RunOptions | None = None,
@@ -64,17 +65,18 @@ async def run_suite(
         ProviderError: the run couldn't start, so nothing was kept.
     """
     options = options or RunOptions()
-    plan = await plan_run(suite, provider, options)
-    folder = start_run(suite, provider, out=out, options=options)
-    return await complete_run(suite, provider, folder, plan)
+    plan = await plan_run(suite, providers, options)
+    folder = start_run(suite, providers, out=out, options=options)
+    return await complete_run(plan, folder)
 
 
-async def resume_run(path: Path, provider: Provider | None = None) -> Run:
+async def resume_run(path: Path, providers: Providers | None = None) -> Run:
     """Pick up a kept run, answering only the (case, trial) slots that still have no answer.
 
-    The suite is read from the file the run was started from. The provider is
-    built from the run's options and closed afterwards, unless one is given,
-    which is then left open for its owner.
+    The suite is read from the file the run was started from. The providers
+    are built from the run's options and closed afterwards, unless they are
+    given, and then they're left open for their owner. Whatever the run
+    already paid for is answered from its own recording, never bought again.
 
     Raises:
         RunError: the folder isn't a run, or its suite file has changed since.
@@ -83,47 +85,21 @@ async def resume_run(path: Path, provider: Provider | None = None) -> Run:
     """
     suite, folder = reopen_run(path)
     options = folder.manifest.options
-    if provider is not None:
-        return await _resume(suite, provider, folder)
-    async with aclosing(provider_for(suite, options)) as built:
+    if providers is not None:
+        return await _resume(suite, providers, folder)
+    async with aclosing(providers_for(suite, options)) as built:
         return await _resume(suite, built, folder)
 
 
-async def _resume(suite: Suite, provider: Provider, folder: RunFolder) -> Run:
-    plan = await plan_run(suite, provider, folder.manifest.options)
+async def _resume(suite: Suite, providers: Providers, folder: RunFolder) -> Run:
+    plan = await plan_run(suite, providers, folder.manifest.options)
     folder.resume()
-    return await complete_run(suite, provider, folder, plan)
-
-
-async def plan_run(suite: Suite, provider: Provider, options: RunOptions) -> Plan:
-    """Make sure a run can start, before anything is kept.
-
-    A provider that charges is asked to count one case's tokens: a free call
-    that proves the credentials and the model. A budget needs every case's
-    count, and a model with a list price to reserve against. A provider that
-    answers for free has nothing to budget, so no budget is held.
-
-    Raises:
-        ProviderError: the provider couldn't count tokens, or a budget was
-            asked for on a model with no list price.
-    """
-    if not provider.charges:
-        return Plan({}, None)
-    if options.budget_usd is None:
-        await provider.estimate(_request(suite, suite.cases[0], 1))
-        return Plan({}, None)
-    model = suite.target.model
-    if model is None or price_of(model) is None:
-        raise ProviderError(
-            f"can't hold a budget for model {model!r}: it has no list price, "
-            "so nothing can be reserved"
-        )
-    return Plan(await estimate_suite(suite, provider, options), options.budget_usd)
+    return await complete_run(plan, folder)
 
 
 def start_run(
     suite: Suite,
-    provider: Provider,
+    providers: Providers,
     *,
     out: Path,
     options: RunOptions | None = None,
@@ -132,7 +108,7 @@ def start_run(
 
     `plan_run` comes first, so a run that can't start never leaves a folder behind.
     """
-    return RunFolder.start(out, manifest_for(suite, provider, options or RunOptions()))
+    return RunFolder.start(out, manifest_for(suite, providers, options or RunOptions()))
 
 
 def reopen_run(path: Path) -> tuple[Suite, RunFolder]:
@@ -155,12 +131,16 @@ def reopen_run(path: Path) -> tuple[Suite, RunFolder]:
     return suite, folder
 
 
-async def complete_run(suite: Suite, provider: Provider, folder: RunFolder, plan: Plan) -> Run:
-    """Answer every (case, trial) the folder still lacks, keeping each outcome as it lands."""
-    cases = {case.id: case for case in suite.cases}
+async def complete_run(plan: Plan, folder: RunFolder) -> Run:
+    """Answer every (case, trial) the folder still lacks, keeping each outcome as it lands.
+
+    Raises:
+        ProviderError: the run's own recording can't be read.
+    """
+    cases = {case.id: case for case in plan.suite.cases}
     answered = folder.answered
     todo = [slot for slot in folder.manifest.slots if slot not in answered]
-    session = _Session(suite, provider, folder, plan)
+    session = _Session(plan, folder)
     async with asyncio.TaskGroup() as group:
         for case_id, trial in todo:
             group.create_task(session.attempt(cases[case_id], trial))
@@ -168,51 +148,8 @@ async def complete_run(suite: Suite, provider: Provider, folder: RunFolder, plan
     return folder.run()
 
 
-def provider_for(suite: Suite, options: RunOptions) -> Provider:
-    """What a run answers from: the recording `options.replay` names, or the suite's own target.
-
-    Raises:
-        ProviderError: the recording or the target's provider couldn't be set up.
-    """
-    if options.replay is not None:
-        return ReplayProvider.from_file(options.replay)
-    return build_provider(suite.target, suite.folder)
-
-
-async def estimate_suite(suite: Suite, provider: Provider, options: RunOptions) -> dict[str, int]:
-    """How many input tokens each case takes, by case id.
-
-    Raises:
-        ProviderError: the provider couldn't count a case's tokens.
-    """
-    limit = asyncio.Semaphore(options.concurrency)
-
-    # An error comes back as a value so the task group never wraps it in a group.
-    async def estimate(case: Case) -> tuple[str, int | ProviderError]:
-        async with limit:
-            try:
-                return case.id, await provider.estimate(_request(suite, case, 1))
-            except ProviderError as error:
-                return case.id, error
-
-    async with asyncio.TaskGroup() as group:
-        tasks = [group.create_task(estimate(case)) for case in suite.cases]
-    estimates: dict[str, int] = {}
-    for case_id, outcome in (task.result() for task in tasks):
-        if isinstance(outcome, ProviderError):
-            raise outcome
-        estimates[case_id] = outcome
-    return estimates
-
-
-def worst_case_usd(suite: Suite, input_tokens: int) -> float:
-    """The most one trial can cost: its input, plus `max_tokens` of output, at list price."""
-    usage = Usage(input_tokens=input_tokens, output_tokens=suite.target.max_tokens)
-    return (cost_usd(usage, suite.target.model) if suite.target.model else None) or 0.0
-
-
-def manifest_for(suite: Suite, provider: Provider, options: RunOptions) -> Manifest:
-    """A manifest for a fresh run of `suite` on `provider`."""
+def manifest_for(suite: Suite, providers: Providers, options: RunOptions) -> Manifest:
+    """A manifest for a fresh run of `suite` on `providers`."""
     started = datetime.now(UTC)
     return Manifest(
         run_id=f"{started:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}",
@@ -221,7 +158,8 @@ def manifest_for(suite: Suite, provider: Provider, options: RunOptions) -> Manif
         fingerprint=fingerprint(suite),
         provider="replay" if options.replay else suite.target.provider,
         model=suite.target.model,
-        charges=provider.charges,
+        judge=suite.judge.model if suite.judged else None,
+        charges=providers.charges,
         case_ids=tuple(case.id for case in suite.cases),
         trials=options.trials or suite.trials,
         options=options,
@@ -243,11 +181,6 @@ def backoff(attempt: int, retry_after: float | None, *, base: float) -> float:
         return min(retry_after, BACKOFF_CAP_S)
     ceiling = min(BACKOFF_CAP_S, base * 2 ** (attempt - 1))
     return random.uniform(0, ceiling)  # noqa: S311  (jitter spreads retries out; it isn't a secret)
-
-
-def served_matches(requested: str | None, served: str) -> bool:
-    """Whether the model that answered is the one asked for, allowing a dated snapshot of it."""
-    return requested is None or served == requested or served.startswith(f"{requested}-")
 
 
 class Budget:
@@ -276,69 +209,87 @@ class Budget:
         self.spent_usd += actual_usd
 
 
-def _request(suite: Suite, case: Case, trial: int) -> Request:
-    return Request(
-        case_id=case.id,
-        trial=trial,
-        model=suite.target.model,
-        system=suite.target.system,
-        messages=case.conversation,
-        max_tokens=suite.target.max_tokens,
-        options=dict(suite.target.options),
-    )
+@dataclass(frozen=True, slots=True)
+class _Answered:
+    """A request that got a completion: what came back, from where, how long it took, its cost."""
+
+    completion: Completion
+    source: Source
+    latency_ms: float
+    cost_usd: float | None
+    attempts: int
+    retries: tuple[Retry, ...]
+
+    def result(self, request: Request, grades: Sequence[Grade]) -> TrialResult:
+        return TrialResult(
+            request=request,
+            completion=self.completion,
+            grades=tuple(grades),
+            latency_ms=round(self.latency_ms, 1),
+            cost_usd=self.cost_usd,
+            attempts=self.attempts,
+            retries=self.retries,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _Miss:
+    """A request that got no completion: why, and what the attempts cost anyway."""
+
+    kind: FailureKind
+    reason: str
+    cost_usd: float | None
+    attempts: int
+    retries: tuple[Retry, ...]
+
+    def failure(self, request: Request) -> TrialFailure:
+        return TrialFailure(
+            case_id=request.case_id,
+            trial=request.trial,
+            kind=self.kind,
+            reason=self.reason,
+            attempts=self.attempts,
+            retries=self.retries,
+            cost_usd=self.cost_usd,
+            at=datetime.now(UTC),
+        )
 
 
 @dataclass(slots=True)
 class _Tries:
-    """One trial's attempts so far: how many requests were sent, and every retry."""
+    """One request's attempts so far: how many were sent, and every retry."""
 
     request: Request
     sent: int = 0
     retries: list[Retry] = field(default_factory=list)
 
-    def failure(self, kind: FailureKind, reason: str, *, cost: float | None = None) -> TrialFailure:
-        return TrialFailure(
-            case_id=self.request.case_id,
-            trial=self.request.trial,
-            kind=kind,
-            reason=reason,
-            attempts=self.sent,
-            retries=tuple(self.retries),
-            cost_usd=cost,
-            at=datetime.now(UTC),
-        )
+    def answered(
+        self, completion: Completion, source: Source, latency_ms: float, cost: float | None
+    ) -> _Answered:
+        return _Answered(completion, source, latency_ms, cost, self.sent, tuple(self.retries))
 
-    def result(
-        self,
-        completion: Completion,
-        graders: Sequence[Grader],
-        latency_ms: float,
-        cost: float | None,
-    ) -> TrialResult:
-        return TrialResult(
-            request=self.request,
-            completion=completion,
-            grades=tuple(grader.grade(completion.text) for grader in graders),
-            latency_ms=round(latency_ms, 1),
-            cost_usd=cost,
-            attempts=self.sent,
-            retries=tuple(self.retries),
-        )
+    def miss(self, kind: FailureKind, reason: str, *, cost: float | None = None) -> _Miss:
+        return _Miss(kind, reason, cost, self.sent, tuple(self.retries))
 
 
 class _Session:
-    """One run in progress: the shared limits, and what each attempt does."""
+    """One run in progress: the shared limits, and what each attempt does.
 
-    def __init__(self, suite: Suite, provider: Provider, folder: RunFolder, plan: Plan) -> None:
-        self._suite = suite
-        self._provider = provider
+    Before any request is sent, two recordings are looked in: the run's own,
+    so a resumed run never buys again what it has, and the one it replays, if
+    any. A completion found in either is free; one bought, or copied from a
+    replay, is recorded, so the run's recording can always replay the run.
+    """
+
+    def __init__(self, plan: Plan, folder: RunFolder) -> None:
+        self._plan = plan
+        self._suite = plan.suite
+        self._providers = plan.providers
         self._folder = folder
         self._options = folder.manifest.options
-        self._graders = {
-            case.id: [build_grader(check) for check in case.checks] for case in suite.cases
-        }
-        self._worst = {
-            case_id: worst_case_usd(suite, tokens) for case_id, tokens in plan.estimates.items()
+        self._own = folder.recorded()
+        self._checks = {
+            case.id: [build_check(check) for check in case.checks] for case in plan.suite.cases
         }
         self._budget = Budget(plan.budget_usd)
         self._limit = asyncio.Semaphore(self._options.concurrency)
@@ -349,31 +300,101 @@ class _Session:
         return self._budget.spent_usd
 
     async def attempt(self, case: Case, trial: int) -> None:
-        """Answer one trial, retrying when the provider says to, and keep what became of it."""
-        tries = _Tries(_request(self._suite, case, trial))
+        """Answer one trial, grade it, asking the judge where a check needs it, and keep it."""
+        request = answer_request(self._suite, case, trial)
+        worst = self._plan.worst_answer_usd(case.id)
+        outcome = await self._ask(request, self._providers.answers, worst)
+        if isinstance(outcome, _Miss):
+            self._folder.add_failure(outcome.failure(request))
+            return
+        self._keep(request, outcome)
+        answer = Answer(
+            text=outcome.completion.text,
+            conversation=request.messages,
+            latency_ms=outcome.latency_ms,
+            cost_usd=outcome.cost_usd,
+        )
+        grades = [
+            await self._grade(request, index, check, answer)
+            for index, check in enumerate(self._checks[case.id])
+        ]
+        self._folder.add(outcome.result(request, grades))
+
+    async def _grade(
+        self, answered: Request, index: int, check: Grader | JudgeCheck, answer: Answer
+    ) -> Grade:
+        """A check's grade: decided here when it's code, asked of the judge when it isn't.
+
+        A judge's completion is recorded only when it holds a verdict. One
+        that doesn't is trouble with the judge, not a thing under test, and
+        the judge is asked again next time rather than replayed.
+        """
+        if isinstance(check, Grader):
+            return check.grade(answer)
+        request = judge.verdict_request(self._suite, answered, index, check, answer)
+        worst = self._plan.worst_verdict_usd(answered.case_id, index)
+        outcome = await self._ask(request, self._providers.judge, worst)
+        if isinstance(outcome, _Miss):
+            return judge.no_verdict(check, outcome.reason, outcome.cost_usd)
+        grade = judge.grade(check, outcome.completion, outcome.cost_usd)
+        if grade.passed is not None:
+            self._keep(request, outcome)
+        return grade
+
+    def _keep(self, request: Request, outcome: _Answered) -> None:
+        """Record a completion the run bought or copied, so its recording can replay it."""
+        if outcome.source != "own":
+            self._folder.record(request, outcome.completion, outcome.latency_ms)
+
+    async def _ask(
+        self, request: Request, provider: Provider | None, worst: float
+    ) -> _Answered | _Miss:
+        """One request through every limit: a slot, the time limit, the budget, and the retries."""
+        tries = _Tries(request)
         async with self._limit:
             try:
                 async with asyncio.timeout(self._options.time_limit_s):
-                    outcome = await self._answer(tries, self._graders[case.id])
+                    return await self._answer(tries, provider, worst)
             except TimeoutError:
-                reason = f"no answer within {self._options.time_limit_s:g} seconds"
-                outcome = tries.failure("timeout", reason)
-        if isinstance(outcome, TrialResult):
-            self._folder.add(outcome)
-        else:
-            self._folder.add_failure(outcome)
+                limit = self._options.time_limit_s
+                return tries.miss("timeout", f"no answer within {limit:g} seconds")
 
-    async def _answer(self, tries: _Tries, graders: Sequence[Grader]) -> TrialResult | TrialFailure:
+    async def _answer(
+        self, tries: _Tries, provider: Provider | None, worst: float
+    ) -> _Answered | _Miss:
+        """A recorded completion when one exists, or else the provider's, within the budget."""
         request = tries.request
-        worst = self._worst.get(request.case_id, 0.0)
+        on_record = self._on_record(request)
+        if on_record is not None:
+            source, recording = on_record
+            tries.sent += 1
+            completion = await recording.complete(request)
+            return self._check_model(tries, completion, source, completion.latency_ms or 0.0)
+        if provider is None:
+            return tries.miss(
+                "provider", "nothing to answer from: the recording lacks this request"
+            )
+        return await self._buy(tries, provider, worst)
+
+    def _on_record(self, request: Request) -> tuple[Source, ReplayProvider] | None:
+        """Which recording already holds this very request, if either does."""
+        if self._own.has(request):
+            return "own", self._own
+        replay = self._providers.recording
+        if replay is not None and replay.has(request):
+            return "replay", replay
+        return None
+
+    async def _buy(self, tries: _Tries, provider: Provider, worst: float) -> _Answered | _Miss:
+        request = tries.request
         while True:
             if not self._budget.reserve(worst):
-                reason = f"${worst:.4f} more would pass the ${self._budget.limit_usd:g} budget"
-                return tries.failure("budget", reason)
+                reason = f"{dollars(worst)} more would pass the ${self._budget.limit_usd:g} budget"
+                return tries.miss("budget", reason)
             tries.sent += 1
             started = time.perf_counter()
             try:
-                completion = await self._provider.complete(request)
+                completion = await provider.complete(request)
             except asyncio.CancelledError:
                 self._budget.settle(worst, worst)
                 raise
@@ -381,7 +402,7 @@ class _Session:
                 self._budget.settle(worst, 0.0)
                 if tries.sent >= self._options.attempts:
                     reason = f"gave up after {tries.sent} attempts; the last said: {error}"
-                    return tries.failure("provider", reason)
+                    return tries.miss("provider", reason)
                 wait = backoff(tries.sent, error.retry_after, base=self._options.backoff_s)
                 tries.retries.append(
                     Retry(attempt=tries.sent, reason=str(error), waited_s=round(wait, 3))
@@ -390,11 +411,20 @@ class _Session:
                 continue
             except ProviderError as error:
                 self._budget.settle(worst, 0.0)
-                return tries.failure("provider", str(error))
-            latency_ms = (time.perf_counter() - started) * 1000
+                return tries.miss("provider", str(error))
+            measured_ms = (time.perf_counter() - started) * 1000
             cost = cost_usd(completion.usage, completion.model)
-            self._budget.settle(worst, cost or 0.0 if self._provider.charges else 0.0)
-            if not served_matches(request.model, completion.model):
-                reason = f"asked for {request.model!r}, but {completion.model!r} answered"
-                return tries.failure("served-model", reason, cost=cost)
-            return tries.result(completion, graders, latency_ms, cost)
+            self._budget.settle(worst, (cost or 0.0) if provider.charges else 0.0)
+            known_ms = completion.latency_ms
+            return self._check_model(tries, completion, "live", known_ms or measured_ms)
+
+    def _check_model(
+        self, tries: _Tries, completion: Completion, source: Source, latency_ms: float
+    ) -> _Answered | _Miss:
+        """The completion as answered, unless a model other than the one asked for gave it."""
+        request = tries.request
+        cost = cost_usd(completion.usage, completion.model)
+        if not served_matches(request.model, completion.model):
+            reason = f"asked for {request.model!r}, but {completion.model!r} answered"
+            return tries.miss("served-model", reason, cost=cost)
+        return tries.answered(completion, source, latency_ms, cost)

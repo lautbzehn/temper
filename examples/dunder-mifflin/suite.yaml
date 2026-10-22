@@ -32,6 +32,8 @@ cases:
     checks:
       - type: contains
         text: heavier
+      - type: length
+        max_words: 120
 
   - id: unopened-return
     tags: [returns]

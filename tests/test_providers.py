@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from temper.errors import ProviderError, UnknownNameError
+from temper.planning import providers_for
 from temper.providers import (
     ClaudeProvider,
     FakeProvider,
@@ -16,11 +17,11 @@ from temper.providers import (
     ReplayProvider,
     Request,
     Usage,
+    build_judge,
     build_provider,
 )
 from temper.results import RunOptions
-from temper.runner import provider_for
-from temper.suite import Message, Target
+from temper.suite import Judge, Message, Target
 from tests.support import answer, make_suite
 
 if TYPE_CHECKING:
@@ -210,13 +211,48 @@ def test_the_claude_provider_builds_with_a_key(monkeypatch: pytest.MonkeyPatch) 
     assert provider.charges
 
 
-def test_provider_for_prefers_a_replay_when_the_options_name_one(files: Files) -> None:
+def test_providers_for_prefers_a_replay_when_the_options_name_one(files: Files) -> None:
     path = recording_file(files, Recording.of(request("case", 1), answer()))
     suite = make_suite(
         {"id": "case", "input": "Hi", "checks": [{"type": "contains", "text": "y"}]},
         options={"replies": "gone.yaml"},
     )
 
-    assert isinstance(provider_for(suite, RunOptions(replay=path)), ReplayProvider)
+    assert isinstance(providers_for(suite, RunOptions(replay=path)).answers, ReplayProvider)
     with pytest.raises(ProviderError, match="can't read fake replies"):
-        provider_for(suite, RunOptions())
+        providers_for(suite, RunOptions())
+
+
+def test_a_replay_knows_which_requests_it_holds(files: Files) -> None:
+    recorded = Recording.of(request("case", 1), answer())
+    provider = ReplayProvider.from_file(recording_file(files, recorded))
+
+    assert provider.has(request("case", 1))
+    assert not provider.has(request("case", 1, text="Something else"))
+    assert not provider.has(request("case", 2))
+
+
+def test_a_replay_names_the_verdict_it_lacks(files: Files) -> None:
+    provider = ReplayProvider.from_file(
+        recording_file(files, Recording.of(request("case", 1), answer()))
+    )
+    asked = request("case", 1).model_copy(update={"check": 0})
+
+    with pytest.raises(
+        ProviderError, match="no recorded verdict for check 0 of case 'case' trial 1"
+    ):
+        asyncio.run(provider.complete(asked))
+    assert asyncio.run(provider.estimate(asked)) == 0
+
+
+def test_a_recording_from_before_verdicts_still_loads(files: Files) -> None:
+    line = Recording.of(request("case", 1), answer()).model_dump_json(exclude={"check"})
+    path = files.write("recording.jsonl", line + "\n")
+
+    assert ask(ReplayProvider.from_file(path), "case", 1) == "yes"
+
+
+def test_the_judge_answers_through_claude_set_up_from_its_options() -> None:
+    assert isinstance(build_judge(Judge(options={"effort": "low"})), ClaudeProvider)
+    with pytest.raises(ValidationError):
+        build_judge(Judge(options={"temperature": 1}))

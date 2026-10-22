@@ -2,6 +2,29 @@
 
 All notable changes to Temper. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] · 10.22.2026
+
+Graders you can trust: more checks, checks of your own, and a judge that is measured before it is believed.
+
+### Added
+
+- Five checks: `matches` (a regular expression), `length` (word count bounds), `json` (the whole answer is JSON, with named keys), `cost` (at most so many dollars at list price), and `latency` (answered within so many seconds).
+- The `judge` check: one property in plain words, decided by a second model. The judge sees the conversation and the answer quoted inside tags with the property after them, is told what not to reward, and answers in JSON of a fixed shape with the reason first. Each call goes through the runner like an answer: retried, budgeted, recorded, and checked for the model that answered. A suite's `judge` block picks the model and its options; a suite that would judge a model with itself doesn't load.
+- `temper label`, which asks for a yes or no on each judged answer, blind to the judge, and `temper calibrate`, which reports agreement, Cohen's kappa, and every disagreement, with a 90% bar for trusting the judge.
+- Checks from other packages, through the `temper.graders` entry point group. A plugin that can't be used is reported by name and package.
+- A grade can reach no verdict: the judge was down, or a `cost` check met a model with no list price. The trial isn't scored, the grade says why, and the summary counts it apart.
+- `--replay` replays verdicts too, and asks the judge live only for the ones the recording lacks, so a revised judge can be tried on the same answers.
+- A replayed answer keeps its recorded latency, so a `latency` check means the same thing live and replayed.
+- A resumed run answers from its own recording first, so an interrupt while judging never costs the answer again.
+- The judge's tags carry a hash of the quoted text, so no answer can close its own tag. A judge's answer that holds no verdict is never recorded, so the judge is asked again on a replay.
+- A label names the answer it was about and the property as it was worded, so calibration survives a rewording or a reorder and never scores a label against a different answer. Trust takes 20 labels, 90% agreement, and Cohen's kappa at 0.6.
+
+### Changed
+
+- The runner takes `Providers` (answers, judge, recording) where it took one provider, and `providers_for` builds them from a suite; planning a run (`plan_run`, `estimate_suite`, `Plan`) lives in `temper.planning`, and finding a check by name in `temper.checks`. Graders grade an `Answer`, which carries the text, the conversation, the latency, and the cost, rather than a bare string.
+- A paid run counts every request's tokens before it starts, not just one, so a request cut off by the time limit is counted at its real worst case whether or not a budget was set.
+- `--time-limit` and `--attempts` apply per request, an answer or a verdict each.
+
 ## [0.2.1] · 10.22.2026
 
 The first live run found a bug the tests couldn't see. The command ran its free preflight in one event loop and the trials in another, with one API client between them, whose pooled connections belonged to the first loop. Every trial's first attempt failed with a connection error, and the retry hid it.

@@ -3,28 +3,32 @@
 Answers go in `results.jsonl`, one trial per line, with the request, the
 completion, its cost, and every grade. Attempts that never produced an answer
 go in `errors.jsonl` with their reason, so plumbing trouble never shares a
-column with wrong answers. A live run also keeps `recording.jsonl`, which the
-replay provider plays back, and `manifest.json` says what ran, on what, and when.
+column with wrong answers. A run that spends money also keeps
+`recording.jsonl`, every completion it paid for, answers and verdicts alike,
+which the replay provider plays back. `manifest.json` says what ran, on what,
+and when.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Self, TypeVar
+from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from temper.errors import RunError, UnreadableFileError
+from temper import jsonl
+from temper.errors import BadLineError, RunError, UnreadableFileError
 from temper.files import read_text
-from temper.graders import Grade
-from temper.providers import Completion, Recording, Request, Slot, Status
+from temper.graders import Answer, Grade
+from temper.providers import Completion, Recording, ReplayProvider, Request, Slot, Status
 from temper.suite import Closed, Count
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
-Record = TypeVar("Record", bound=BaseModel)
+    from temper.jsonl import Record
+
 FailureKind = Literal["timeout", "provider", "served-model", "budget"]
 
 
@@ -79,14 +83,34 @@ class TrialResult(BaseModel):
         return self.completion.status
 
     @property
-    def answer(self) -> str:
-        """The answer's text."""
-        return self.completion.text
+    def answer(self) -> Answer:
+        """The answer as the checks saw it."""
+        return Answer(
+            text=self.completion.text,
+            conversation=self.request.messages,
+            latency_ms=self.latency_ms,
+            cost_usd=self.cost_usd,
+        )
 
     @property
-    def passed(self) -> bool:
-        """Whether every check passed."""
-        return all(grade.passed for grade in self.grades)
+    def graded(self) -> bool:
+        """Whether every check reached a verdict."""
+        return all(grade.passed is not None for grade in self.grades)
+
+    @property
+    def passed(self) -> bool | None:
+        """Whether every check passed, or None while some check has no verdict."""
+        return all(grade.passed for grade in self.grades) if self.graded else None
+
+    @property
+    def scored(self) -> bool:
+        """Whether a pass rate may count this trial: complete, every check having a verdict."""
+        return self.status == "complete" and self.graded
+
+    @property
+    def verdicts_usd(self) -> float | None:
+        """What the judge's verdicts on this trial cost at list price, or None if none was asked."""
+        return _priced(grade.cost_usd for grade in self.grades)
 
 
 class TrialFailure(BaseModel):
@@ -115,6 +139,7 @@ class Manifest(BaseModel):
     fingerprint: str
     provider: str
     model: str | None
+    judge: str | None = None
     charges: bool
     case_ids: tuple[str, ...]
     trials: int
@@ -146,20 +171,31 @@ class Run(BaseModel):
 
     @property
     def scored(self) -> tuple[TrialResult, ...]:
-        """The trials a pass rate is drawn from: complete answers only."""
-        return tuple(result for result in self.results if result.status == "complete")
+        """The trials a pass rate is drawn from: complete answers with a verdict on every check."""
+        return tuple(result for result in self.results if result.scored)
 
     @property
     def trials_passed(self) -> int:
         """How many scored trials passed every check."""
-        return sum(result.passed for result in self.scored)
+        return sum(result.passed is True for result in self.scored)
+
+    @property
+    def without_verdict(self) -> int:
+        """How many complete answers some check reached no verdict on, so they aren't scored."""
+        return sum(result.status == "complete" and not result.graded for result in self.results)
 
     @property
     def cost_usd(self) -> float | None:
-        """What every attempt cost at list price, failures included, or None if none was priced."""
-        attempts: list[TrialResult | TrialFailure] = [*self.results, *self.failures]
-        priced = [attempt.cost_usd for attempt in attempts if attempt.cost_usd is not None]
-        return sum(priced) if priced else None
+        """What every request cost at list price, verdicts and failures too, or None if unpriced."""
+        answers = (result.cost_usd for result in self.results)
+        verdicts = (result.verdicts_usd for result in self.results)
+        failures = (failure.cost_usd for failure in self.failures)
+        return _priced((*answers, *verdicts, *failures))
+
+    @property
+    def verdicts_usd(self) -> float | None:
+        """What the judge's verdicts cost at list price, or None if none was asked."""
+        return _priced(result.verdicts_usd for result in self.results)
 
     @property
     def missing(self) -> list[Slot]:
@@ -177,6 +213,17 @@ class Run(BaseModel):
         for result in self.results:
             grouped[result.case_id].append(result)
         return grouped
+
+
+def _kept(path: Path, kind: type[Record]) -> Iterator[Record]:
+    """The records in a file the run writes as it goes, which isn't there until the first one."""
+    return jsonl.read(path, kind) if path.exists() else iter(())
+
+
+def _priced(costs: Iterable[float | None]) -> float | None:
+    """The sum of the costs that are known, or None when none is."""
+    known = [cost for cost in costs if cost is not None]
+    return sum(known) if known else None
 
 
 class RunFolder:
@@ -211,11 +258,13 @@ class RunFolder:
         """
         try:
             manifest = Manifest.model_validate_json(read_text(path / "manifest.json"))
-            results = list(_lines(path / "results.jsonl", TrialResult))
-            failures = list(_lines(path / "errors.jsonl", TrialFailure))
+            results = list(_kept(path / "results.jsonl", TrialResult))
+            failures = list(_kept(path / "errors.jsonl", TrialFailure))
         except UnreadableFileError as error:
             raise RunError(f"{str(path)!r} isn't a run Temper can read: {error}") from None
         except ValidationError as error:
+            raise RunError(f"{str(path)!r} holds a manifest Temper can't read: {error}") from None
+        except BadLineError as error:
             raise RunError(f"{str(path)!r} holds a record Temper can't read: {error}") from None
         return cls(path, manifest, results, failures)
 
@@ -225,16 +274,29 @@ class RunFolder:
         return frozenset((result.case_id, result.trial) for result in self._results)
 
     def add(self, result: TrialResult) -> None:
-        """Keep an answered trial, and record its completion when the run spent money on it."""
+        """Keep an answered trial."""
         self._results.append(result)
-        _append(self.path / "results.jsonl", result)
-        if self.manifest.charges:
-            _append(self.path / "recording.jsonl", Recording.of(result.request, result.completion))
+        jsonl.append(self.path / "results.jsonl", result)
 
     def add_failure(self, failure: TrialFailure) -> None:
         """Keep a failed attempt."""
         self._failures.append(failure)
-        _append(self.path / "errors.jsonl", failure)
+        jsonl.append(self.path / "errors.jsonl", failure)
+
+    def record(self, request: Request, completion: Completion, latency_ms: float) -> None:
+        """Keep a completion for replay, with how long it took, when the run spends money."""
+        if self.manifest.charges:
+            timed = completion.model_copy(update={"latency_ms": latency_ms})
+            jsonl.append(self.path / "recording.jsonl", Recording.of(request, timed))
+
+    def recorded(self) -> ReplayProvider:
+        """Everything the run has recorded so far, to answer from before anything is bought twice.
+
+        Raises:
+            ProviderError: the recording can't be read.
+        """
+        path = self.path / "recording.jsonl"
+        return ReplayProvider.from_file(path) if path.exists() else ReplayProvider([])
 
     def resume(self) -> None:
         """Note that the run is being picked up again."""
@@ -259,16 +321,3 @@ class RunFolder:
     def _write_manifest(self) -> None:
         text = self.manifest.model_dump_json(indent=2) + "\n"
         (self.path / "manifest.json").write_text(text, encoding="utf-8")
-
-
-def _append(path: Path, record: BaseModel) -> None:
-    with path.open("a", encoding="utf-8") as lines:
-        lines.write(record.model_dump_json() + "\n")
-
-
-def _lines(path: Path, kind: type[Record]) -> Iterator[Record]:
-    if not path.exists():
-        return
-    for line in read_text(path).splitlines():
-        if line.strip():
-            yield kind.model_validate_json(line)

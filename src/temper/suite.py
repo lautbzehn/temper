@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     AfterValidator,
@@ -37,6 +37,9 @@ def _check_id(value: str) -> str:
 
 CaseId = Annotated[str, Field(max_length=64), AfterValidator(_check_id)]
 
+# The one check a model decides instead of code. `graders.JudgeCheck` answers to it.
+JUDGE = "judge"
+
 # A positive whole number, as written: YAML's `yes` and "3" are not quietly read as numbers.
 Count = Annotated[int, Strict(), Field(gt=0)]
 
@@ -62,7 +65,7 @@ class Check(BaseModel):
     type: str
 
     @property
-    def settings(self) -> dict[str, Any]:
+    def settings(self) -> dict[str, object]:
         """Everything in the check except its `type`, for the grader to validate."""
         return dict(self.model_extra or {})
 
@@ -89,6 +92,11 @@ class Case(Closed):
             return (Message(role="user", content=self.input),)
         return self.messages or ()
 
+    @property
+    def judged(self) -> tuple[int, ...]:
+        """The positions of the checks the judge decides, counting from 0."""
+        return tuple(index for index, check in enumerate(self.checks) if check.type == JUDGE)
+
 
 class Target(Closed):
     """The system under test: which provider and model answer, and how they're prompted."""
@@ -107,13 +115,27 @@ class Target(Closed):
         return self
 
 
+class Judge(Closed):
+    """Who decides a `judge` check: the model, how long its verdict may run, and its options.
+
+    The judge is a Claude model asked through the same provider as a Claude
+    target, so `options` takes what that provider takes. It is never the
+    model under test: a suite that judges a model with itself doesn't load.
+    """
+
+    model: str = "claude-opus-5-5"
+    max_tokens: Count = 512
+    options: dict[str, JsonValue] = Field(default_factory=dict)
+
+
 class Suite(Closed):
-    """A whole suite: the system under test, and the cases it has to pass."""
+    """A whole suite: the system under test, the cases it has to pass, and who judges them."""
 
     schema_version: Literal[1] = Field(alias="schema")
     name: str
     description: str = ""
     target: Target
+    judge: Judge = Judge()
     trials: Count = 1
     cases: tuple[Case, ...] = Field(min_length=1)
 
@@ -131,6 +153,11 @@ class Suite(Closed):
     def folder(self) -> Path:
         """The folder this suite's relative paths are read from: its file's, or the current one."""
         return self._path.parent if self._path is not None else Path()
+
+    @property
+    def judged(self) -> bool:
+        """Whether any case has a check the judge decides."""
+        return any(case.judged for case in self.cases)
 
     @model_validator(mode="after")
     def _remember_path(self, info: ValidationInfo) -> Self:

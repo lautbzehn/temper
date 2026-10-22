@@ -11,12 +11,15 @@ from anthropic import AsyncAnthropic, DefaultAsyncHttpxClient
 from typer.testing import CliRunner
 
 from temper import __version__
+from temper.checks import check_kinds
 from temper.cli import app
+from temper.errors import PluginError
 from tests.support import EXAMPLE, local_api
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from temper.plugins import Plugin
     from tests.support import Files
 
 runner = CliRunner()
@@ -39,7 +42,7 @@ def test_validate_confirms_a_good_suite() -> None:
     result = runner.invoke(app, ["validate", str(EXAMPLE)])
 
     assert result.exit_code == 0
-    assert "is valid: 5 cases, 9 checks" in result.output
+    assert "is valid: 5 cases, 10 checks" in result.output
 
 
 def test_validate_lists_problems_and_fails(files: Files) -> None:
@@ -333,7 +336,7 @@ def test_a_run_can_be_replayed_from_a_recording(
 
     assert result.exit_code == 0, result.output
     assert "small · replay claude-sonnet-5-5" in result.output
-    assert "at list price, nothing spent" in result.output
+    assert "at list price · nothing spent" in result.output
 
 
 def test_the_api_key_never_reaches_any_kept_file(
@@ -401,19 +404,22 @@ def claude_suite(files: Files, *, model: str = "claude-sonnet-5-5", cases: int =
 
 
 def mock_client(**settings: Any) -> AsyncAnthropic:
-    """A client for a pretend API that greets every request and counts a few tokens."""
+    """A client for a pretend API: it greets, or gives a passing verdict when asked for JSON."""
 
     def api(request: httpx2.Request) -> httpx2.Response:
+        asked = json.loads(request.content)
         if request.url.path.endswith("count_tokens"):
             return httpx2.Response(200, json={"input_tokens": 10})
+        shaped = "format" in asked.get("output_config", {})
+        text = '{"reason": "It greets.", "passed": true}' if shaped else "Hello!"
         return httpx2.Response(
             200,
             json={
                 "id": "msg_1",
                 "type": "message",
                 "role": "assistant",
-                "model": "claude-sonnet-5-5",
-                "content": [{"type": "text", "text": "Hello!"}],
+                "model": asked["model"],
+                "content": [{"type": "text", "text": text}],
                 "stop_reason": "end_turn",
                 "stop_sequence": None,
                 "usage": {"input_tokens": 10, "output_tokens": 5},
@@ -422,6 +428,161 @@ def mock_client(**settings: Any) -> AsyncAnthropic:
 
     transport = httpx2.MockTransport(api)
     return AsyncAnthropic(**settings, http_client=DefaultAsyncHttpxClient(transport=transport))
+
+
+def judged_suite(files: Files) -> Path:
+    return files.write(
+        "suite.yaml",
+        """
+        schema: 1
+        name: judged
+        target: {provider: claude, model: claude-sonnet-5-5, system: Be brief.}
+        cases:
+          - id: a
+            input: Hi
+            checks:
+              - {type: contains, text: hello}
+              - {type: judge, property: greets the customer}
+        """,
+    )
+
+
+def judged_run(files: Files, monkeypatch: pytest.MonkeyPatch, *extra: str) -> Path:
+    """A judged run through the pretend API; returns its folder."""
+    out = files.root / "runs"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    monkeypatch.setattr("temper.providers.claude.AsyncAnthropic", mock_client)
+    result = runner.invoke(app, ["run", str(judged_suite(files)), "--out", str(out), *extra])
+    assert result.exit_code == 0, result.output
+    [folder] = out.iterdir()
+    return folder
+
+
+def test_a_judged_run_asks_the_judge_and_says_what_it_cost(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = files.root / "runs"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    monkeypatch.setattr("temper.providers.claude.AsyncAnthropic", mock_client)
+
+    result = runner.invoke(app, ["run", str(judged_suite(files)), "--out", str(out)])
+
+    assert result.exit_code == 0, result.output
+    assert "judged · claude claude-sonnet-5-5 · judge claude-opus-5-5 · 1 case" in result.output
+    assert "1 of 1 scored trial passed (100%)" in result.output
+    assert "of it on the judge" in result.output
+    [folder] = out.iterdir()
+    recorded = [json.loads(line) for line in (folder / "recording.jsonl").read_text().splitlines()]
+    assert {(r["case_id"], r["trial"], r["check"]) for r in recorded} == {
+        ("a", 1, None),
+        ("a", 1, 1),
+    }
+
+
+def test_a_dry_run_counts_the_verdicts_too(files: Files, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    monkeypatch.setattr("temper.providers.claude.AsyncAnthropic", mock_client)
+
+    result = runner.invoke(app, ["run", str(judged_suite(files)), "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert "Judge calls" in result.output
+    assert "every answer priced at the 1024-token ceiling and every verdict at the judge's" in (
+        result.output
+    )
+
+
+def test_labels_are_asked_for_blind_and_then_calibrated(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = judged_run(files, monkeypatch)
+
+    labeled = runner.invoke(app, ["label", str(folder)], input="y\n")
+
+    assert labeled.exit_code == 0, labeled.output
+    assert "Does the answer have this property? [y]es, [n]o, [s]kip, [q]uit:" in labeled.output
+    assert "Property: greets the customer" in labeled.output
+    assert "It greets." not in labeled.output
+    assert "1 label added; every judged answer is labeled. Next: temper calibrate" in labeled.output
+
+    again = runner.invoke(app, ["label", str(folder)])
+    assert "Nothing to label" in again.output
+
+    calibrated = runner.invoke(app, ["calibrate", str(folder)])
+    assert calibrated.exit_code == 0, calibrated.output
+    assert "judged · judge claude-opus-5-5 · 1 label met a verdict" in calibrated.output
+    assert "Agreement 100% (1 of 1)" in calibrated.output
+    assert "Too few labels to say: 1 of the 20 it takes." in calibrated.output
+
+    elsewhere = runner.invoke(app, ["calibrate", str(folder), "--labels", str(folder / "gone")])
+    assert elsewhere.exit_code == 1
+    assert "no labels file at" in elsewhere.output
+
+
+def test_calibrate_wants_labels_first(files: Files, monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = judged_run(files, monkeypatch)
+
+    result = runner.invoke(app, ["calibrate", str(folder)])
+
+    assert result.exit_code == 1
+    assert f"no labels to compare with; make some with: temper label {folder}" in result.output
+
+
+def test_labeling_can_stop_early_and_keeps_what_it_has(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = judged_run(files, monkeypatch, "--trials", "2")
+
+    stopped = runner.invoke(app, ["label", str(folder)], input="n\n")
+
+    assert stopped.exit_code == 130
+    assert "stopped; every label given so far is kept" in stopped.output
+    assert len((folder / "labels.jsonl").read_text().splitlines()) == 1
+
+    quit_ = runner.invoke(app, ["label", str(folder)], input="q\n")
+    assert quit_.exit_code == 0
+    assert f"0 labels added, 1 to go. Pick it up with: temper label {folder}" in quit_.output
+
+    disagreed = runner.invoke(app, ["calibrate", str(folder)])
+    assert "Agreement 0% (0 of 1)" in disagreed.output
+    assert "judge: pass, you: fail · the judge said: It greets." in disagreed.output
+    assert "Too few labels to say" in disagreed.output
+
+
+def test_a_replayed_dry_run_says_which_verdicts_are_on_record(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = judged_run(files, monkeypatch)
+    recording = str(folder / "recording.jsonl")
+
+    held = runner.invoke(app, ["run", str(judged_suite(files)), "--replay", recording, "--dry-run"])
+
+    assert held.exit_code == 0, held.output
+    assert "1 of 1 verdict are in the recording" in held.output
+    assert "Nothing to spend." in held.output
+
+    suite = judged_suite(files)
+    suite.write_text(suite.read_text().replace("greets the customer", "says hello"))
+    asked = runner.invoke(app, ["run", str(suite), "--replay", recording, "--dry-run"])
+
+    assert asked.exit_code == 0, asked.output
+    assert "0 of 1 verdict are in the recording" in asked.output
+    assert "At most $" in asked.output
+
+
+def test_a_plugin_that_cannot_be_used_is_reported_plainly(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(group: str) -> list[Plugin]:
+        raise PluginError(f"plugin 'shout' from shouty can't be loaded: no module named {group}")
+
+    check_kinds.cache_clear()
+    monkeypatch.setattr("temper.plugins.load", broken)
+
+    result = runner.invoke(app, ["validate", str(EXAMPLE)])
+
+    assert result.exit_code == 1
+    assert "plugin 'shout' from shouty can't be loaded: no module named temper.graders" in (
+        result.output
+    )
 
 
 def test_python_dash_m_temper_runs_the_cli(monkeypatch: pytest.MonkeyPatch) -> None:

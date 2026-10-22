@@ -269,3 +269,15 @@ def test_an_estimate_that_fails_is_an_error() -> None:
 
     with pytest.raises(ProviderError, match="couldn't count tokens"):
         asyncio.run(api.provider().estimate(request()))
+
+
+def test_a_request_for_json_names_the_shape_in_the_output_config() -> None:
+    api = Api(lambda _: httpx2.Response(200, json=message()))
+    shaped = request().model_copy(update={"json_schema": {"type": "object"}})
+
+    complete(api, shaped, effort="low")
+    complete(api, shaped)
+
+    schema = {"type": "json_schema", "schema": {"type": "object"}}
+    assert api.sent[0]["output_config"] == {"effort": "low", "format": schema}
+    assert api.sent[1]["output_config"] == {"format": schema}
