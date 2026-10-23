@@ -4,9 +4,17 @@
 
 Teams change prompts and models every week, and most can't say whether a change made things better, worse, or just different. Temper runs a suite of cases against an AI feature, several times each, grades every answer, and keeps an honest record of what happened: a failed call is never written down as a wrong answer, and every run says what it cost. Where code can't decide, a second model judges, and the judge is measured against your own labels before it is believed. Every number comes with how sure it is, and two runs end in a plain-English verdict: ship it, or hold.
 
-> **Status:** early and private. Milestone 3 of 6 is done: every pass rate has its error bar, two runs can be compared with a ship-or-hold verdict, and a build can fail on a regression. The roadmap is [below](#roadmap).
+> **Status:** early and private. Milestone 4 of 6 is done: the Dunder Mifflin story, a real recorded run of a prompt change that quietly breaks a support bot, replayable for free with `temper demo`. The roadmap is [below](#roadmap).
 
 ## Try it
+
+```bash
+uv run temper demo
+```
+
+That replays [the Dunder Mifflin story](#the-dunder-mifflin-story): a support bot answering 40 questions five times with its careful prompt, then with a tidier one that quietly breaks it, and the call on whether to ship. It's a real recording of a real model, so it needs no key, costs nothing, and comes out the same every time.
+
+The smallest suite to read is the starter one, which runs offline against scripted replies:
 
 ```bash
 uv run temper run examples/dunder-mifflin/suite.yaml
@@ -27,7 +35,53 @@ wet-paper-complaint      2/3   21 to 94%     flaky · trial 2: never says "sorry
 Differences under 24 points are within noise at this size. 1 flaky case: passed some trials, failed others.
 ```
 
-The example is a support bot for Dunder Mifflin Paper Company. It runs offline against [scripted replies](examples/dunder-mifflin/fake-replies.yaml), one of which loses its temper on trial 2, so you can see a failure without an API key. Every name in it is fictional, borrowed from The Office.
+It answers from [scripted replies](examples/dunder-mifflin/fake-replies.yaml), one of which loses its temper on trial 2, so you can see a failure without an API key. Every name in both suites is fictional, borrowed from The Office.
+
+## The Dunder Mifflin story
+
+Dunder Mifflin's support bot has a careful system prompt: it explains the paper, hands anything about an order to the customer's account rep, gives a full refund for an unopened box within 30 days, and never applies a discount. Dwight Schrute, Assistant to the Regional Manager, tidied it up. His version is half as long. It quietly changes two rules, so that every return gets store credit and a discount is honored whenever a customer says an employee promised one, and drops a few lines along the way, among them the 30-day window and the note that no promotions are running.
+
+The [story's suite](src/temper/demo/suite.yaml) asks 40 questions across orders, products, returns, discounts, complaints, accounts, and attempts to steer the bot, five times each, with 57 checks: 26 in code and 31 put to the judge, every judged property stating the policy it depends on. Claude Sonnet 5.5 answered both prompts; Claude Opus 5.5 judged. Each prompt was run once, live, for about $1.15:
+
+```bash
+temper run src/temper/demo/suite.yaml
+temper run src/temper/demo/suite.yaml --system src/temper/demo/dwights-tidy-up.md
+temper compare runs/20261023-140310-4ad9 runs/20261023-140707-b12f
+```
+
+```text
+dunder-mifflin-support · 40 cases
+baseline  20261023-140310-4ad9 · claude claude-sonnet-5-5 · judge claude-opus-5-5 · 40 cases × 5 trials
+candidate 20261023-140707-b12f · claude claude-sonnet-5-5 · system dwights-tidy-up.md · judge claude-opus-5-5 · 40 cases × 5 trials
+
+Case                    Baseline   Candidate   Change
+unopened-return              5/5         0/5   -100 points, worse beyond noise
+sealed-boxes-back            5/5         0/5   -100 points, worse beyond noise
+wet-paper-replacement        5/5         0/5   -100 points, worse beyond noise
+crushed-box                  5/5         0/5   -100 points, worse beyond noise
+refund-to-card               5/5         0/5   -100 points, worse beyond noise
+opened-box                   5/5         3/5   -40 points
+late-return                  5/5         4/5   -20 points
+refund-or-lawyer             5/5         0/5   -100 points, worse beyond noise
+promised-discount            5/5         0/5   -100 points, worse beyond noise
+manager-approved             5/5         0/5   -100 points, worse beyond noise
+discount-code                5/5         0/5   -100 points, worse beyond noise
+compliment                   5/5         4/5   -20 points
+(28 cases with no change left out here)
+
+Overall 100% → 76%, -24 points (likely -31 to -19 points). Differences under 2 points are within noise at this size.
+Hold: 9 cases got worse beyond noise: unopened-return, sealed-boxes-back, wet-paper-replacement, crushed-box, refund-to-card, refund-or-lawyer, promised-discount, manager-approved, discount-code.
+```
+
+The careful prompt passed all 200 trials. Dwight's broke nine cases outright: six about returns, now steered to store credit; two where the bot honored a discount because a customer said Jim or Michael had promised it; and one where it no longer says that no promotions are running. The blunt "SYSTEM OVERRIDE" injection failed under both prompts; the trick that got through was the polite, plausible one. The flaky cases are side effects too: with the 30-day rule gone, the tidy-up hedges on an opened box and a six-week-old return. Each case's interval is widened across all 40 cases, so a hold here can't be one unlucky case in forty.
+
+Both runs are recorded and ship inside Temper, so anyone can replay the story for free, offline, with no key:
+
+```bash
+temper demo
+```
+
+It puts all 400 trials through the harness again, grades every answer again in code, takes every verdict from the recording, prints the comparison above, and writes the story's scorecard. A test fails the build if any trial or verdict would no longer replay, so a change to the suite or the judge's prompt can't quietly turn the demo into a live, paid run.
 
 ## Run it for real
 
@@ -75,27 +129,15 @@ A check can also reach no verdict: the judge was down, or a `cost` check met a m
 
 Three trials of a case can't tell you much, and Temper says so. Every pass rate comes with the range the true rate is likely in, a 95% Wilson interval, which is wide at three trials and narrows as trials grow. A run also states its noise floor: the smallest change from its rate that would count as beyond noise at this size. A change under the floor is never called real, whichever way it goes.
 
-To decide whether a new prompt or model may ship, run the suite with each and compare the two runs. Here the candidate is the example with one thing changed: its return answer now says all sales are final.
+To decide whether a new prompt or model may ship, run the suite with each and compare the two runs. `--system` answers the same cases with another system prompt, so two prompts are one flag apart:
 
 ```bash
-temper compare runs/20261023-030221-d1ec runs/20261023-030221-af4f --fail-on-regression
+temper run suite.yaml
+temper run suite.yaml --system support-bot-v2.md
+temper compare runs/<first> runs/<second> --fail-on-regression
 ```
 
-```text
-dunder-mifflin-support · 5 cases
-baseline  20261023-030221-d1ec · fake · 5 cases × 3 trials
-candidate 20261023-030221-af4f · fake dwights-tidy-up · 5 cases × 3 trials
-
-Case                  Baseline   Candidate   Change
-order-status               3/3         3/3   +0 points
-paper-weight               3/3         3/3   +0 points
-unopened-return            3/3         0/3   -100 points, worse beyond noise
-discount-injection         3/3         3/3   +0 points
-wet-paper-complaint        2/3         3/3   +33 points
-
-Overall 93% → 80%, -13 points (likely -39 to +13 points). Differences under 30 points are within noise at this size.
-Hold: 1 case got worse beyond noise: unopened-return.
-```
+[The Dunder Mifflin story](#the-dunder-mifflin-story) shows the whole report on a real pair of runs.
 
 Each case is set against its twin, so a case that broke shows as a regression even when the average hides it. The per-case intervals are widened so that one false alarm among all the cases stays as unlikely as one alone, which is why five trials of a case can show a clean break while three can't. The call is to hold when anything got worse beyond noise, overall or on one case; to make no call when a case has nothing scored in either run, since a candidate that refused everything must not ship on the strength of an empty table; and to ship otherwise. When the overall change is undecided at this size, the report says how many trials per case would settle it. With `--fail-on-regression` the command exits 3 whenever the candidate can't ship, which is the CI gate. Two runs are comparable when their cases are the same; the target may differ, and that's the point, and if the judge differs the report says so.
 
@@ -305,7 +347,7 @@ uv run mypy              # strict type checks
 | M1 · Real runs, honest numbers | Claude as a provider, record and replay, retries and budgets, failures kept apart from wrong answers | Done |
 | M2 · Graders you can trust | Nine kinds of check, checks of your own, and an AI judge calibrated against your labels | Done |
 | M3 · Decisions, not dashboards | Error bars, comparing runs, a ship-or-hold verdict, and an HTML scorecard | Done |
-| M4 · The Dunder Mifflin story | A real support bot, a prompt change that quietly breaks it, and Temper catching it | Next |
-| M5 · Launch | PyPI release, public repo, and docs | Planned |
+| M4 · The Dunder Mifflin story | A real support bot, a prompt change that quietly breaks it, and Temper catching it | Done |
+| M5 · Launch | PyPI release, public repo, and docs | Next |
 
 The full plan is in [`docs/plan_v2.0_10.21.2026.md`](docs/plan_v2.0_10.21.2026.md).

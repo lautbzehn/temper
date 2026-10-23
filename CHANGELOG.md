@@ -2,6 +2,16 @@
 
 All notable changes to Temper. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] · 10.23.2026
+
+The Dunder Mifflin story: a real recorded run of a prompt change that quietly breaks a support bot, and Temper catching it.
+
+### Added
+
+- `temper demo`: the story replayed from its recording, for free, offline, with no key. All 400 trials go through the harness again, every answer is graded again in code, and every verdict comes from the recording. It prints the comparison and writes the story's scorecard.
+- The story itself, shipped inside the package: a 40-case support suite with 57 checks (31 of them judged), the careful prompt, Dwight's tidy-up, and one live run of each, five trials per case. The careful prompt passed all 200 trials; the tidy-up broke nine cases beyond noise and is held.
+- `temper run --system FILE` answers the same cases with another system prompt, to compare two prompts. The prompt is held inline from the start, the run's options name it, a resume applies it again, and every report names the prompt that answered.
+
 ## [0.4.0] · 10.23.2026
 
 Decisions, not dashboards: every number comes with how sure it is, and two runs end in a call.

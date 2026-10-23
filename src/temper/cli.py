@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from contextlib import aclosing, contextmanager
 from functools import partial
 from pathlib import Path
@@ -11,7 +12,7 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import typer
 from rich.console import Console
 
-from temper import __version__, calibration, comparison
+from temper import __version__, calibration, comparison, demo
 from temper.doctor import examine
 from temper.errors import PluginError, ProviderError, RunError, SuiteError
 from temper.labeling import label_run
@@ -252,11 +253,28 @@ def scorecard(
         before = RunFolder.open(baseline).run() if baseline is not None else None
         page = build_scorecard(run, before)
     target = out_file or folder / "scorecard.html"
-    try:
-        target.write_text(page, encoding="utf-8")
-    except OSError as error:
-        _fail(f"can't write the scorecard to {str(target)!r}: {error.strerror}")
+    _write_page(target, page)
     out.print(f"Wrote {target}", markup=False)
+
+
+@app.command(name="demo")
+def show_demo(
+    *,
+    out_file: Annotated[
+        Path, typer.Option("--out", help="Where to write the story's scorecard.")
+    ] = Path("temper-demo.html"),
+) -> None:
+    """Replay the Dunder Mifflin story from its recording: free, offline, and no key needed.
+
+    A support bot's careful prompt, and Dwight's tidier one, each answered
+    the same 40 questions five times. The comparison says whether to ship.
+    """
+    with _plain_errors(), tempfile.TemporaryDirectory() as scratch:
+        story = asyncio.run(demo.replay(Path(scratch)))
+    render_comparison(story.comparison, out)
+    _write_page(out_file, build_scorecard(story.candidate, story.baseline))
+    out.print()
+    out.print(f"Wrote the story's scorecard to {out_file}. Open it in a browser.", markup=False)
 
 
 @app.command()
@@ -293,6 +311,14 @@ def _plain_errors() -> Iterator[None]:
         _fail(*error.lines())
     except (PluginError, ProviderError, RunError) as error:
         _fail(str(error))
+
+
+def _write_page(target: Path, page: str) -> None:
+    """Write a scorecard, or say plainly why it can't be written."""
+    try:
+        target.write_text(page, encoding="utf-8")
+    except OSError as error:
+        _fail(f"can't write the scorecard to {str(target)!r}: {error.strerror}")
 
 
 def _prepare(out_dir: Path) -> None:

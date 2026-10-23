@@ -48,6 +48,7 @@ uv sync
 uv run temper validate examples/dunder-mifflin/suite.yaml
 uv run temper run examples/dunder-mifflin/suite.yaml
 uv run temper run examples/dunder-mifflin/suite.yaml --dry-run
+uv run temper demo
 uv run pytest --cov
 uv run ruff check && uv run ruff format --check
 uv run mypy
@@ -77,6 +78,7 @@ uv run mypy
 | `src/temper/summary.py` | The terminal summary, the dry-run estimate, the calibration report, the comparison, the check-up |
 | `src/temper/markup.py` | Building HTML so text can never become markup: everything escaped on the way in |
 | `src/temper/scorecard.py` | The single-file HTML scorecard: loads nothing, runs nothing, same run same page |
+| `src/temper/demo/` | The Dunder Mifflin story: the 40-case suite, both prompts, their recordings, and the replay behind `temper demo` |
 | `src/temper/cli.py` | The `temper` command, a thin layer over the library |
 | `src/temper/errors.py` | Every error a person might see |
 | `src/temper/files.py`, `jsonl.py`, `wording.py` | Reading files as UTF-8, records one per line, and the plurals and dollars people read |
