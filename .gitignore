@@ -26,3 +26,6 @@ runs/
 
 # Claude Code session state (the tracker panel reads it locally)
 .claude/tracker.json
+
+# What `temper demo` writes by default.
+temper-demo.html

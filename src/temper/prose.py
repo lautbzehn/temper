@@ -20,11 +20,17 @@ if TYPE_CHECKING:
 
 
 def described(manifest: Manifest) -> str:
-    """`claude claude-sonnet-5-5 · judge claude-opus-5-5 · 5 cases × 3 trials`."""
+    """`claude claude-sonnet-5-5 · system dwights-tidy-up.md · judge claude-opus-5-5 · 5 × 3`.
+
+    The system prompt is named only when the run swapped the suite's own for it.
+    """
     model = f" {manifest.model}" if manifest.model else ""
+    system = manifest.options.system
+    prompt = f" · system {system.name}" if system is not None else ""
     judged = f" · judge {manifest.judge}" if manifest.judge else ""
     cases = plural(len(manifest.case_ids), "case")
-    return f"{manifest.provider}{model}{judged} · {cases} × {plural(manifest.trials, 'trial')}"
+    trials = plural(manifest.trials, "trial")
+    return f"{manifest.provider}{model}{prompt}{judged} · {cases} × {trials}"
 
 
 def count(rate: Rate) -> str:

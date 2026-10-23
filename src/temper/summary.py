@@ -112,8 +112,11 @@ def render_estimate(plan: Plan, options: RunOptions, console: Console) -> None:
     """Print what a run would cost at most, case by case, without running it."""
     suite = plan.suite
     trials = options.trials or suite.trials
+    prompt = f" · system {options.system.name}" if options.system is not None else ""
     console.print(
-        Text.assemble((suite.name, "bold"), f" · dry run · {plural(trials, 'trial')} per case")
+        Text.assemble(
+            (suite.name, "bold"), f"{prompt} · dry run · {plural(trials, 'trial')} per case"
+        )
     )
     console.print()
 

@@ -15,6 +15,7 @@ from temper import judge
 from temper.checks import judge_checks
 from temper.errors import ProviderError
 from temper.graders import Answer
+from temper.loading import swap_system_prompt
 from temper.pricing import cost_usd, price_of
 from temper.providers import (
     ReplayProvider,
@@ -89,10 +90,16 @@ class Estimates:
 
 @dataclass(frozen=True, slots=True)
 class Plan:
-    """A run as planned: who answers, what each request can cost at most, and the budget held."""
+    """A run as planned: the suite it answers, who answers, its options, and what it may cost.
+
+    `suite` is the suite as the run answers it, with any system prompt the
+    options swap in already in place, so whatever starts a run from a plan
+    answers, and describes, the right one.
+    """
 
     suite: Suite
     providers: Providers
+    options: RunOptions
     estimates: Estimates
     budget_usd: float | None
 
@@ -131,10 +138,12 @@ async def plan_run(suite: Suite, providers: Providers, options: RunOptions) -> P
     A run that spends nothing has nothing to count or budget.
 
     Raises:
+        SuiteError: the system prompt the options name can't be read.
         ProviderError: the suite has judge checks but no judge, or judges a
             model with itself; a provider couldn't count tokens; or a budget
             was asked for on a model with no list price.
     """
+    suite = swap_system_prompt(suite, options.system)
     if suite.judged:
         if providers.judge is None:
             raise ProviderError("the suite has judge checks, but no judge was given to decide them")
@@ -142,7 +151,7 @@ async def plan_run(suite: Suite, providers: Providers, options: RunOptions) -> P
         if under_test is not None and same_model(suite.judge.model, under_test):
             raise ProviderError(f"the judge can't be the model under test, {under_test!r}")
     if not providers.charges:
-        return Plan(suite, providers, Estimates(), None)
+        return Plan(suite, providers, options, Estimates(), None)
     if options.budget_usd is not None:
         for model in charged_models(suite, providers):
             if model is None or price_of(model) is None:
@@ -150,7 +159,7 @@ async def plan_run(suite: Suite, providers: Providers, options: RunOptions) -> P
                     f"can't hold a budget for model {model!r}: it has no list price, "
                     "so nothing can be reserved"
                 )
-    return replace(await estimate_suite(suite, providers, options), budget_usd=options.budget_usd)
+    return replace(await _estimate(suite, providers, options), budget_usd=options.budget_usd)
 
 
 def charged_models(suite: Suite, providers: Providers) -> list[str | None]:
@@ -167,8 +176,13 @@ async def estimate_suite(suite: Suite, providers: Providers, options: RunOptions
     """Count every request's input tokens: a plan with no budget held, which a dry run prints.
 
     Raises:
+        SuiteError: the system prompt the options name can't be read.
         ProviderError: a provider couldn't count a request's tokens.
     """
+    return await _estimate(swap_system_prompt(suite, options.system), providers, options)
+
+
+async def _estimate(suite: Suite, providers: Providers, options: RunOptions) -> Plan:
     trials = options.trials or suite.trials
     limit = asyncio.Semaphore(options.concurrency)
     counted: dict[tuple[str, int | None], int] = {}
@@ -203,7 +217,7 @@ async def estimate_suite(suite: Suite, providers: Providers, options: RunOptions
         verdicts={(c, check): n for (c, check), n in counted.items() if check is not None},
         verdicts_on_record=on_record,
     )
-    return Plan(suite, providers, estimates, None)
+    return Plan(suite, providers, options, estimates, None)
 
 
 def _verdicts(

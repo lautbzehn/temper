@@ -105,7 +105,25 @@ def load_suite(path: str | PathLike[str]) -> Suite:
     problems = [*shape, *document.repeated, *checks, *target]
     if suite is None or problems:
         raise SuiteError(source, problems)
-    return suite if system is None else _with_system_prompt(suite, system)
+    return suite if system is None else suite.with_system(system)
+
+
+def swap_system_prompt(suite: Suite, prompt: Path | None) -> Suite:
+    """The suite answered with the system prompt in `prompt`, read now and held inline.
+
+    Planning passes every run through here, so a run that names another
+    prompt answers with it on every path. With no prompt, the suite as it is.
+
+    Raises:
+        SuiteError: the prompt file can't be read.
+    """
+    if prompt is None:
+        return suite
+    try:
+        return suite.with_system(read_text(prompt))
+    except UnreadableFileError as error:
+        problem = Problem("", f"can't read the system prompt: {error.reason}")
+        raise SuiteError(prompt, [problem]) from None
 
 
 def _parse(path: Path) -> _Document:
@@ -354,9 +372,3 @@ def _entries(data: object, key: str) -> list[object]:
     """`data[key]` when that is a list, or else an empty one."""
     value = _entry(data, key)
     return value if isinstance(value, list) else []
-
-
-def _with_system_prompt(suite: Suite, system: str) -> Suite:
-    """The suite with its system prompt inlined, so runs never depend on the file again."""
-    target = suite.target.model_copy(update={"system": system, "system_file": None})
-    return suite.model_copy(update={"target": target})

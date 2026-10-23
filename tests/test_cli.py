@@ -699,3 +699,93 @@ def test_doctor_asks_for_no_credentials_when_the_suite_needs_none(
     assert "✓ Credentials: not needed: the suite names no Claude model" in result.output
     assert "Model" not in result.output
     assert not (files.root / "runs").exists()
+
+
+def prompted_suite(files: Files) -> Path:
+    """A fake suite with a prompt of its own, beside a second prompt to swap in."""
+    files.write("replies.yaml", "a: 'yes'\n")
+    files.write("own.md", "Be brief.\n")
+    files.write("other.md", "Be thorough.\n")
+    return files.write(
+        "suite.yaml",
+        """
+        schema: 1
+        name: prompted
+        target:
+          provider: fake
+          model: fake-1
+          system_file: own.md
+          options: {replies: replies.yaml}
+        trials: 3
+        cases:
+          - {id: a, input: Hi, checks: [{type: contains, text: "yes"}]}
+        """,
+    )
+
+
+def test_a_run_can_answer_with_another_system_prompt(files: Files) -> None:
+    suite = prompted_suite(files)
+    out = files.root / "runs"
+
+    own = runner.invoke(app, ["run", str(suite), "--out", str(out / "own")])
+    other = runner.invoke(
+        app,
+        ["run", str(suite), "--system", str(files.root / "other.md"), "--out", str(out / "other")],
+    )
+
+    assert own.exit_code == 0, own.output
+    assert other.exit_code == 0, other.output
+    assert "prompted · fake fake-1 · 1 case × 3 trials" in own.output
+    assert "prompted · fake fake-1 · system other.md · 1 case × 3 trials" in other.output
+    [own_run] = (out / "own").iterdir()
+    [other_run] = (out / "other").iterdir()
+    asked = json.loads((other_run / "results.jsonl").read_text().splitlines()[0])["request"]
+    assert asked["system"] == "Be thorough.\n"
+    compared = runner.invoke(app, ["compare", str(own_run), str(other_run)])
+    assert compared.exit_code == 0, compared.output
+    assert "candidate " in compared.output
+    assert "system other.md" in compared.output
+
+
+def test_a_run_with_another_prompt_resumes_with_it_and_refuses_it_changed(files: Files) -> None:
+    suite = prompted_suite(files)
+    out = files.root / "runs"
+    other = files.root / "other.md"
+    runner.invoke(app, ["run", str(suite), "--system", str(other), "--out", str(out)])
+    [folder] = out.iterdir()
+
+    resumed = runner.invoke(app, ["resume", str(folder)])
+    other.write_text("Be wordy.\n", encoding="utf-8")
+    changed = runner.invoke(app, ["resume", str(folder)])
+    other.unlink()
+    gone = runner.invoke(app, ["resume", str(folder)])
+
+    assert resumed.exit_code == 0, resumed.output
+    assert changed.exit_code == 1
+    assert "the suite has changed since run" in changed.output
+    assert gone.exit_code == 1
+    assert "can't read the system prompt" in gone.output
+
+
+def test_a_system_prompt_that_cannot_be_read_stops_the_run_before_it_begins(files: Files) -> None:
+    suite = prompted_suite(files)
+    out = files.root / "runs"
+
+    result = runner.invoke(
+        app, ["run", str(suite), "--system", str(files.root / "missing.md"), "--out", str(out)]
+    )
+
+    assert result.exit_code == 1
+    assert "can't read the system prompt" in result.output
+    assert not out.exists()
+
+
+def test_a_dry_run_names_the_prompt_it_priced(files: Files) -> None:
+    suite = prompted_suite(files)
+
+    result = runner.invoke(
+        app, ["run", str(suite), "--system", str(files.root / "other.md"), "--dry-run"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "prompted · system other.md · dry run · 3 trials per case" in result.output

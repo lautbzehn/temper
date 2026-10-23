@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 from contextlib import aclosing, contextmanager
 from functools import partial
 from pathlib import Path
@@ -12,6 +13,7 @@ import typer
 from rich.console import Console
 
 from temper import __version__, calibration, comparison
+from temper.demo import replay as replay_story
 from temper.doctor import examine
 from temper.errors import PluginError, ProviderError, RunError, SuiteError
 from temper.labeling import label_run
@@ -108,6 +110,14 @@ def run(
             "holds are replayed too; any it lacks are judged live.",
         ),
     ] = None,
+    system: Annotated[
+        Path | None,
+        typer.Option(
+            "--system",
+            help="Answer with this system prompt instead of the suite's, to compare two "
+            "prompts on the same cases.",
+        ),
+    ] = None,
     out_dir: Annotated[Path, typer.Option("--out", help="Where each run is kept.")] = Path("runs"),
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Say what it would cost; don't run.")
@@ -124,7 +134,8 @@ def run(
         time_limit_s=time_limit,
         attempts=attempts,
         budget_usd=budget,
-        replay=replay.resolve() if replay else None,
+        replay=replay,
+        system=system,
     )
     with _plain_errors():
         loaded = load_suite(suite)
@@ -133,9 +144,9 @@ def run(
         _estimate(loaded, providers, options)
         return
 
-    def fresh() -> RunFolder:
+    def fresh(plan: Plan) -> RunFolder:
         _prepare(out_dir)
-        return start_run(loaded, providers, out=out_dir, options=options)
+        return start_run(plan, out=out_dir)
 
     _drive(
         loaded, providers, options, fresh, before="run stopped before it began, so nothing was kept"
@@ -149,7 +160,7 @@ def resume(folder: RunDir) -> None:
         loaded, opened = reopen_run(folder)
         providers = providers_for(loaded, opened.manifest.options)
 
-    def picked_up() -> RunFolder:
+    def picked_up(_plan: Plan) -> RunFolder:
         opened.resume()
         return opened
 
@@ -243,11 +254,28 @@ def scorecard(
         before = RunFolder.open(baseline).run() if baseline is not None else None
         page = build_scorecard(run, before)
     target = out_file or folder / "scorecard.html"
-    try:
-        target.write_text(page, encoding="utf-8")
-    except OSError as error:
-        _fail(f"can't write the scorecard to {str(target)!r}: {error.strerror}")
+    _write_page(target, page)
     out.print(f"Wrote {target}", markup=False)
+
+
+@app.command()
+def demo(
+    *,
+    out_file: Annotated[
+        Path, typer.Option("--out", help="Where to write the story's scorecard.")
+    ] = Path("temper-demo.html"),
+) -> None:
+    """Replay the Dunder Mifflin story from its recording: free, offline, and no key needed.
+
+    A support bot's careful prompt, and Dwight's tidier one, each answered
+    the same 40 questions five times. The comparison says whether to ship.
+    """
+    with _plain_errors(), tempfile.TemporaryDirectory() as scratch:
+        story = asyncio.run(replay_story(Path(scratch)))
+    render_comparison(story.comparison, out)
+    _write_page(out_file, build_scorecard(story.candidate, story.baseline))
+    out.print()
+    out.print(f"Wrote the story's scorecard to {out_file}. Open it in a browser.", markup=False)
 
 
 @app.command()
@@ -286,6 +314,14 @@ def _plain_errors() -> Iterator[None]:
         _fail(str(error))
 
 
+def _write_page(target: Path, page: str) -> None:
+    """Write a scorecard, or say plainly why it can't be written."""
+    try:
+        target.write_text(page, encoding="utf-8")
+    except OSError as error:
+        _fail(f"can't write the scorecard to {str(target)!r}: {error.strerror}")
+
+
 def _prepare(out_dir: Path) -> None:
     """Make sure the run can be kept before spending time on it."""
     try:
@@ -310,7 +346,7 @@ def _drive(
     suite: Suite,
     providers: Providers,
     options: RunOptions,
-    folder_once_planned: Callable[[], RunFolder],
+    folder_once_planned: Callable[[Plan], RunFolder],
     *,
     before: str,
 ) -> None:
@@ -325,12 +361,14 @@ def _drive(
         nonlocal folder
         async with aclosing(providers):
             plan = await plan_run(suite, providers, options)
-            folder = folder_once_planned()
+            folder = folder_once_planned(plan)
             out.print(f"Keeping this run in {folder.path}", style="dim")
             return await complete_run(plan, folder)
 
     try:
         finished = asyncio.run(driven())
+    except SuiteError as error:
+        _fail(*error.lines())
     except ProviderError as error:
         _fail(f"{before}: {error}")
     except KeyboardInterrupt:

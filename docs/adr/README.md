@@ -17,3 +17,4 @@ Short records of the choices that shape Temper: the context, the decision, and w
 | [0011](0011-checks-are-plugins-through-entry-points_v1.0_10.22.2026.md) | Checks from other packages come through entry points, named by their class | Accepted |
 | [0012](0012-every-rate-has-its-interval_v1.0_10.23.2026.md) | Every rate has its interval, and a verdict needs a change beyond noise | Accepted |
 | [0013](0013-the-scorecard-escapes-everything-and-loads-nothing_v1.0_10.23.2026.md) | The scorecard escapes everything and loads nothing | Accepted |
+| [0014](0014-the-demo-is-a-real-recording-shipped-and-replayed_v1.0_10.23.2026.md) | The demo is a real recording, shipped and replayed | Accepted |

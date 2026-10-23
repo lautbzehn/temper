@@ -126,9 +126,9 @@ def test_a_judged_suite_needs_a_judge_that_is_not_the_model_under_test(tmp_path:
 def test_a_plan_made_without_a_judge_reaches_no_verdict(tmp_path: Path) -> None:
     suite = make_suite(judged("a"))
     answers = Scripted({"a": [answer()]})
-    folder = start_run(suite, Providers(answers), out=tmp_path)
+    planned = plan(suite, answers)
 
-    finished = asyncio.run(complete_run(plan(suite, answers), folder))
+    finished = asyncio.run(complete_run(planned, start_run(planned, out=tmp_path)))
 
     [grade] = finished.results[0].grades
     assert grade.reason == "no verdict: nothing to answer from: the recording lacks this request"
@@ -244,9 +244,10 @@ def test_an_interrupt_while_judging_loses_nothing_on_resume(files: Files) -> Non
     out = files.root / "runs"
     answers = Scripted({"a": [sonnet()]}, charges=True)
     cut = Scripted({"a": [opus(passed=True), RuntimeError("power cut")]}, charges=True)
-    folder = start_run(suite, Providers(answers, cut), out=out)
+    planned = plan(suite, answers, cut)
+    folder = start_run(planned, out=out)
     with pytest.raises(ExceptionGroup):
-        asyncio.run(complete_run(plan(suite, answers, cut), folder))
+        asyncio.run(complete_run(planned, folder))
     assert folder.answered == frozenset()
     assert recorded_keys(out, folder.manifest.run_id) == {("a", 1, None), ("a", 1, 0)}
 
@@ -309,7 +310,7 @@ def test_a_budget_needs_a_price_for_the_judge_too() -> None:
 def test_a_model_with_no_name_has_no_ceiling() -> None:
     suite = make_suite(case("a"), model=None)
 
-    planned = Plan(suite, Providers(Scripted({}, charges=True)), Estimates(), None)
+    planned = Plan(suite, Providers(Scripted({}, charges=True)), RunOptions(), Estimates(), None)
 
     assert planned.worst_answer_usd("a") == 0.0
 
