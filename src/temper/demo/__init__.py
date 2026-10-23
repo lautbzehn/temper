@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Final
 
 from temper.comparison import compare
 from temper.loading import load_suite
-from temper.planning import prepare_suite, providers_for
+from temper.planning import providers_for
 from temper.results import RunOptions
 from temper.runner import run_suite
 
@@ -62,6 +62,5 @@ async def replay(out: Path) -> Story:
 
 
 async def _replay(suite: Suite, options: RunOptions, out: Path) -> Run:
-    prepared = prepare_suite(suite, options)
-    async with aclosing(providers_for(prepared, options)) as providers:
-        return await run_suite(prepared, providers, out=out, options=options)
+    async with aclosing(providers_for(suite, options)) as providers:
+        return await run_suite(suite, providers, out=out, options=options)
