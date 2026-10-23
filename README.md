@@ -4,17 +4,19 @@
 
 Teams change prompts and models every week, and most can't say whether a change made things better, worse, or just different. Temper runs a suite of cases against an AI feature, several times each, grades every answer, and keeps an honest record of what happened: a failed call is never written down as a wrong answer, and every run says what it cost. Where code can't decide, a second model judges, and the judge is measured against your own labels before it is believed. Every number comes with how sure it is, and two runs end in a plain-English verdict: ship it, or hold.
 
-> **Status:** early and private. Milestone 4 of 6 is done: the Dunder Mifflin story, a real recorded run of a prompt change that quietly breaks a support bot, replayable for free with `temper demo`. The roadmap is [below](#roadmap).
+> **Status:** version 1.0, in beta while it finds its first users. The suite format is version 1, and frozen against breaking changes. The [quickstart](https://github.com/lautbzehn/temper/blob/main/docs/quickstart_v1.0_10.23.2026.md) goes from nothing to a ship-or-hold call on your own prompt in five steps.
 
 ## Try it
 
 ```bash
-uv run temper demo
+uvx --from temper-evals temper demo
 ```
 
-That replays [the Dunder Mifflin story](#the-dunder-mifflin-story): a support bot answering 40 questions five times with its careful prompt, then with a tidier one that quietly breaks it, and the call on whether to ship. It's a real recording of a real model, so it needs no key, costs nothing, and reaches the same verdict every time.
+That replays [the Dunder Mifflin story](https://github.com/lautbzehn/temper#the-dunder-mifflin-story): a support bot answering 40 questions five times with its careful prompt, then with a tidier one that quietly breaks it, and the call on whether to ship. It's a real recording of a real model, so it needs no key, costs nothing, and reaches the same verdict every time.
 
-The smallest suite to read is the starter one, which runs offline against scripted replies:
+To keep it, install it with `uv tool install temper-evals` or `pip install temper-evals`; it needs Python 3.11 or newer.
+
+From a clone of this repository, `uv run temper demo` does the same, and the smallest suite to read is the starter one, which runs offline against scripted replies:
 
 ```bash
 uv run temper run examples/dunder-mifflin/suite.yaml
@@ -35,13 +37,13 @@ wet-paper-complaint      2/3   21 to 94%     flaky · trial 2: never says "sorry
 Differences under 24 points are within noise at this size. 1 flaky case: passed some trials, failed others.
 ```
 
-It answers from [scripted replies](examples/dunder-mifflin/fake-replies.yaml), one of which loses its temper on trial 2, so you can see a failure without an API key. Every name in both suites is fictional, borrowed from The Office.
+It answers from [scripted replies](https://github.com/lautbzehn/temper/blob/main/examples/dunder-mifflin/fake-replies.yaml), one of which loses its temper on trial 2, so you can see a failure without an API key. Every name in both suites is fictional, borrowed from The Office.
 
 ## The Dunder Mifflin story
 
 Dunder Mifflin's support bot has a careful system prompt: it explains the paper, hands anything about an order to the customer's account rep, gives a full refund for an unopened box within 30 days, and never applies a discount. Dwight Schrute, Assistant to the Regional Manager, tidied it up. His version is half as long. It quietly changes two rules, so that every return gets store credit and a discount is honored whenever a customer says an employee promised one, and it drops a few lines along the way: the 30-day window, the prepaid return label, that damaged paper needn't be sent back, and that no promotions are running.
 
-The [story's suite](src/temper/demo/suite.yaml) asks 40 questions across orders, products, returns, discounts, complaints, accounts, and attempts to steer the bot, five times each, with 58 checks: 23 in code and 35 put to the judge, every judged property stating the policy it depends on. Claude Sonnet 5.5 answered both prompts and Claude Opus 5.5 judged, in one live run per prompt that cost about $1.15 each:
+The [story's suite](https://github.com/lautbzehn/temper/blob/main/src/temper/demo/suite.yaml) asks 40 questions across orders, products, returns, discounts, complaints, accounts, and attempts to steer the bot, five times each, with 58 checks: 23 in code and 35 put to the judge, every judged property stating the policy it depends on. Claude Sonnet 5.5 answered both prompts and Claude Opus 5.5 judged, in one live run per prompt that cost about $1.15 each:
 
 ```bash
 temper run src/temper/demo/suite.yaml
@@ -97,7 +99,7 @@ target:
     effort: low
 ```
 
-Credentials come from the environment (`ANTHROPIC_API_KEY`, or a profile from `ant auth login`), never from a file Temper reads or writes. Then:
+Credentials come from the environment (`ANTHROPIC_API_KEY`), or from a profile that `ant auth login` keeps and the Anthropic SDK reads. Temper itself never reads, writes, or prints a key. Then:
 
 ```bash
 temper run suite.yaml --dry-run                 # what it could cost, at most, without running
@@ -138,7 +140,7 @@ temper run suite.yaml --system support-bot-v2.md
 temper compare runs/<first> runs/<second> --fail-on-regression
 ```
 
-[The Dunder Mifflin story](#the-dunder-mifflin-story) shows the whole report on a real pair of runs.
+[The Dunder Mifflin story](https://github.com/lautbzehn/temper#the-dunder-mifflin-story) shows the whole report on a real pair of runs.
 
 Each case is set against its twin, so a case that broke shows as a regression even when the average hides it. The per-case intervals are widened so that one false alarm among all the cases stays as unlikely as one alone, which is why five trials of a case can show a clean break while three can't. The call is to hold when anything got worse beyond noise, overall or on one case; to make no call when a case has nothing scored in either run, since a candidate that refused everything must not ship on the strength of an empty table; and to ship otherwise. When the overall change is undecided at this size, the report says how many trials per case would settle it. With `--fail-on-regression` the command exits 3 whenever the candidate can't ship, which is the CI gate. Two runs are comparable when their cases are the same; the target may differ, and that's the point, and if the judge differs the report says so.
 
@@ -230,6 +232,8 @@ temper calibrate runs/20261022-091500-3f2a   # agreement, Cohen's kappa, every d
 
 Labeling shows the conversation, the answer, and the property, and never what the judge said. Each label names the answer it was about and the property as you read it, so labels survive a rewording and are never matched to a different answer. Calibration sets the judge's verdicts against your labels, property by property, and prints each disagreement with the judge's reason. Trust takes 20 labels or more, agreement at 90% or better, and Cohen's kappa at 0.6 or better, so a judge that agrees by always saying yes doesn't earn it. Short of that, reword the property or pick another judge, then run the suite again with `--replay` against the first run's recording: the answers replay for free, the verdicts the recording holds are replayed, and the rest are judged live, so the revised judge is tried on the very same answers, against the same labels.
 
+Temper's own judge was measured this way. Dan West labeled 30 of its answers on a five-question pilot, blind to what the judge said, and the judge agreed on 29: 97%, with a kappa of 0.65. The [pilot](https://github.com/lautbzehn/temper/tree/main/examples/judge-pilot) ships with its run and his labels, so from a clone `uv run temper calibrate examples/judge-pilot/run` reproduces the number. The one split was a property that depended on a policy the judge couldn't see, which is why every judged property in the story states its policy. Kappa is modest because nearly every pilot answer was a good one, so the pilot shows the judge agreeing on good answers more than catching bad ones; the story's nine broken cases are where it caught them.
+
 ## Write your own check
 
 A check is a small Pydantic model: a `name`, its settings as fields, and a pure `grade`. A package can add one through an entry point, and it then works in a suite like a built-in one.
@@ -315,23 +319,24 @@ for failure in run.failures:
 
 If you have five minutes, start here:
 
-1. [`runner.py`](src/temper/runner.py) runs every case and trial side by side under a concurrency limit, with `asyncio.TaskGroup`, and sends answers and verdicts through one pipe that owns the retries, the time limit, the budget, and the check that the right model answered, after looking in the run's own recording so nothing is bought twice.
-2. [`judge.py`](src/temper/judge.py) turns a judge check into a request: the question with the property last, the verdict's JSON shape with the reason first, and the grade read back from what came.
-3. [`stats.py`](src/temper/stats.py) is a short module of closed-form statistics: Wilson intervals, Newcombe's interval on a difference, the noise floor, and how many trials would settle a change. Its property tests say what the numbers must always do.
-4. [`results.py`](src/temper/results.py) is the run folder: answers and failures are written the moment they land, read back in suite order, and a run can be picked up where it stopped.
-5. [`calibration.py`](src/temper/calibration.py) sets the judge against your labels, with Cohen's kappa for the agreement chance would give anyway.
-6. [`loading.py`](src/temper/loading.py) parses the YAML once into both data and a map of where everything starts, so every problem, Pydantic's or Temper's own, can point at its line.
-7. [`test_claude.py`](tests/test_claude.py) drives the real SDK through a mock transport, so rate limits, outages, refusals, and bad keys are all exercised without a network.
+1. [`runner.py`](https://github.com/lautbzehn/temper/blob/main/src/temper/runner.py) runs every case and trial side by side under a concurrency limit, with `asyncio.TaskGroup`, and sends answers and verdicts through one pipe that owns the retries, the time limit, the budget, and the check that the right model answered, after looking in the run's own recording so nothing is bought twice.
+2. [`judge.py`](https://github.com/lautbzehn/temper/blob/main/src/temper/judge.py) turns a judge check into a request: the question with the property last, the verdict's JSON shape with the reason first, and the grade read back from what came.
+3. [`stats.py`](https://github.com/lautbzehn/temper/blob/main/src/temper/stats.py) is a short module of closed-form statistics: Wilson intervals, Newcombe's interval on a difference, the noise floor, and how many trials would settle a change. Its property tests say what the numbers must always do.
+4. [`results.py`](https://github.com/lautbzehn/temper/blob/main/src/temper/results.py) is the run folder: answers and failures are written the moment they land, read back in suite order, and a run can be picked up where it stopped.
+5. [`calibration.py`](https://github.com/lautbzehn/temper/blob/main/src/temper/calibration.py) sets the judge against your labels, with Cohen's kappa for the agreement chance would give anyway.
+6. [`loading.py`](https://github.com/lautbzehn/temper/blob/main/src/temper/loading.py) parses the YAML once into both data and a map of where everything starts, so every problem, Pydantic's or Temper's own, can point at its line.
+7. [`test_claude.py`](https://github.com/lautbzehn/temper/blob/main/tests/test_claude.py) drives the real SDK through a mock transport, so rate limits, outages, refusals, and bad keys are all exercised without a network.
 
-The [decision notes](docs/adr/README.md) explain why things are built the way they are.
+The [decision notes](https://github.com/lautbzehn/temper/blob/main/docs/adr/README.md) explain why things are built the way they are.
 
 ## How it's built
 
 - Python 3.11 and up, tested on every supported version through 3.15.
-- Fully typed and checked with strict mypy. Linted with every Ruff rule turned on, with the few exceptions explained in [`pyproject.toml`](pyproject.toml).
+- Fully typed and checked with strict mypy. Linted with every Ruff rule turned on, with the few exceptions explained in [`pyproject.toml`](https://github.com/lautbzehn/temper/blob/main/pyproject.toml).
 - 100% of the code is exercised by the tests, and CI fails below 100%.
 - Pydantic validates everything that comes from a file; nothing downstream has to wonder whether its input is well formed.
-- Built with [Claude Code](https://claude.com/claude-code). Dan West sets the direction, makes the decisions, and reviews every change; the decision notes record the reasoning.
+- Built with [Claude Code](https://claude.com/claude-code). Dan West sets the direction, makes the decisions, and reviews every change; the decision notes record the reasoning, and the [architecture](https://github.com/lautbzehn/temper/blob/main/docs/architecture_v1.0_10.23.2026.md) shows how the pieces fit.
+- Licensed under [Apache-2.0](https://github.com/lautbzehn/temper/blob/main/LICENSE).
 
 ```bash
 uv sync                  # install everything
@@ -340,15 +345,15 @@ uv run ruff check        # lint
 uv run mypy              # strict type checks
 ```
 
-## Roadmap
+## How it got here
 
-| Milestone | What it adds | Status |
+| Milestone | What it added | Release |
 |---|---|---|
-| M0 · Walking skeleton | Suite format, validation, async runner, scripted provider, three text checks | Done |
-| M1 · Real runs, honest numbers | Claude as a provider, record and replay, retries and budgets, failures kept apart from wrong answers | Done |
-| M2 · Graders you can trust | Nine kinds of check, checks of your own, and an AI judge calibrated against your labels | Done |
-| M3 · Decisions, not dashboards | Error bars, comparing runs, a ship-or-hold verdict, and an HTML scorecard | Done |
-| M4 · The Dunder Mifflin story | A real support bot, a prompt change that quietly breaks it, and Temper catching it | Done |
-| M5 · Launch | PyPI release, public repo, and docs | Next |
+| M0 · Walking skeleton | Suite format, validation, async runner, scripted provider, three text checks | v0.1.0 |
+| M1 · Real runs, honest numbers | Claude as a provider, record and replay, retries and budgets, failures kept apart from wrong answers | v0.2.0 |
+| M2 · Graders you can trust | Nine kinds of check, checks of your own, and an AI judge calibrated against your labels | v0.3.0 |
+| M3 · Decisions, not dashboards | Error bars, comparing runs, a ship-or-hold verdict, and an HTML scorecard | v0.4.0 |
+| M4 · The Dunder Mifflin story | A real support bot, a prompt change that quietly breaks it, and Temper catching it | v0.5.0 |
+| M5 · Launch | PyPI through trusted publishing, the public repo, the quickstart, and the architecture | v1.0.0 |
 
-The full plan is in [`docs/plan_v2.0_10.21.2026.md`](docs/plan_v2.0_10.21.2026.md).
+The full plan is in [`docs/plan_v2.0_10.21.2026.md`](https://github.com/lautbzehn/temper/blob/main/docs/plan_v2.0_10.21.2026.md).

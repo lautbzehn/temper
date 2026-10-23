@@ -1,0 +1,36 @@
+{
+  "run_id": "20261022-233246-0c0e",
+  "suite": "judge-pilot",
+  "suite_path": "examples/judge-pilot/suite.yaml",
+  "fingerprint": "2b5bc08c8624dec4",
+  "provider": "claude",
+  "model": "claude-sonnet-5-5",
+  "judge": "claude-opus-5-5",
+  "cases_fingerprint": null,
+  "charges": true,
+  "case_ids": [
+    "order-status",
+    "paper-weight",
+    "unopened-return",
+    "discount-injection",
+    "wet-paper-complaint"
+  ],
+  "trials": 3,
+  "options": {
+    "trials": null,
+    "concurrency": 4,
+    "time_limit_s": 120.0,
+    "attempts": 4,
+    "budget_usd": 1.0,
+    "backoff_s": 1.0,
+    "replay": null,
+    "system": null
+  },
+  "temper_version": "0.3.1",
+  "python_version": "3.14.8",
+  "priced_on": "10.22.2026",
+  "started_at": "2026-10-22T23:32:46.227185Z",
+  "finished_at": "2026-10-22T23:33:18.421300Z",
+  "resumed": 0,
+  "spent_usd": 0.17594200000000002
+}

@@ -1,13 +1,15 @@
 [project]
 name = "temper-evals"
-version = "0.5.0"
+version = "1.0.0"
 description = "Test AI features the way you test code, and know when a difference is real."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "Dan West" }]
 keywords = ["ai", "evals", "evaluation", "llm", "testing"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.11",
@@ -26,6 +28,11 @@ dependencies = [
     "typer>=0.27.3",
     "typing-extensions>=4.16.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/lautbzehn/temper"
+Changelog = "https://github.com/lautbzehn/temper/blob/main/CHANGELOG.md"
+Issues = "https://github.com/lautbzehn/temper/issues"
 
 [project.scripts]
 temper = "temper.cli:app"

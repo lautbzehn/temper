@@ -29,3 +29,6 @@ runs/
 
 # What `temper demo` writes by default.
 temper-demo.html
+
+# Writing that isn't public yet, such as the case study before it's on icarianforge.com.
+drafts/

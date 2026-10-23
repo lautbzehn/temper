@@ -2,6 +2,22 @@
 
 All notable changes to Temper. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] · 10.23.2026
+
+The launch. The suite format is version 1, frozen against breaking changes, and the library and command line follow semantic versioning from here.
+
+### Added
+
+- Releases publish to PyPI as `temper-evals` through trusted publishing: a published GitHub release builds the package, checks the tag is the version, proves the built wheel replays the demo with no key, and publishes. No token is stored anywhere.
+- The story's scorecard is built by `temper demo` and served by GitHub Pages on each release.
+- A [quickstart](docs/quickstart_v1.0_10.23.2026.md), from nothing to a ship-or-hold call in five steps, and an [architecture](docs/architecture_v1.0_10.23.2026.md) page with a diagram.
+- An Apache-2.0 license, and the package metadata PyPI shows: the license, the project's links, and a Beta status.
+- The judge pilot ships in `examples/judge-pilot`, with its run and Dan West's 30 labels, so the published agreement, 29 of 30, reproduces with `temper calibrate`. A test fails the build if it ever stops reproducing.
+
+### Changed
+
+- The README's links are absolute, so they work on PyPI too, and it publishes the judge's measured agreement with a person's labels.
+
 ## [0.5.0] · 10.23.2026
 
 The Dunder Mifflin story: a real recorded run of a prompt change that quietly breaks a support bot, and Temper catching it.
@@ -118,3 +134,12 @@ The walking skeleton: a suite goes in, graded results come out.
 - The fake provider, which answers from scripted replies so suites run offline.
 - A Dunder Mifflin starter suite in `examples/`.
 - A Python API: `load_suite`, `build_provider`, `run_suite`, and `write_run`.
+
+[1.0.0]: https://github.com/lautbzehn/temper/releases/tag/v1.0.0
+[0.5.0]: https://github.com/lautbzehn/temper/releases/tag/v0.5.0
+[0.4.0]: https://github.com/lautbzehn/temper/releases/tag/v0.4.0
+[0.3.1]: https://github.com/lautbzehn/temper/releases/tag/v0.3.1
+[0.3.0]: https://github.com/lautbzehn/temper/releases/tag/v0.3.0
+[0.2.1]: https://github.com/lautbzehn/temper/releases/tag/v0.2.1
+[0.2.0]: https://github.com/lautbzehn/temper/releases/tag/v0.2.0
+[0.1.0]: https://github.com/lautbzehn/temper/releases/tag/v0.1.0
