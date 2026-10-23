@@ -2,6 +2,18 @@
 
 All notable changes to Temper. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] · 10.23.2026
+
+The first patch, for what the launch showed.
+
+### Fixed
+
+- The demo site rebuilds on every push to `main` instead of on a release. A release builds from its tag, and the `github-pages` environment only lets `main` deploy, so the site's rebuild on v1.0.0 was refused. The site itself was never down.
+
+### Added
+
+- The project's links on PyPI include the live demo, https://temper.icarianforge.com. It couldn't be in 1.0.0, since PyPI can't edit a release, and the site wasn't live yet.
+
 ## [1.0.0] · 10.23.2026
 
 The launch. The suite format is version 1, frozen against breaking changes, and the library and command line follow semantic versioning from here.
@@ -135,6 +147,7 @@ The walking skeleton: a suite goes in, graded results come out.
 - A Dunder Mifflin starter suite in `examples/`.
 - A Python API: `load_suite`, `build_provider`, `run_suite`, and `write_run`.
 
+[1.0.1]: https://github.com/lautbzehn/temper/releases/tag/v1.0.1
 [1.0.0]: https://github.com/lautbzehn/temper/releases/tag/v1.0.0
 [0.5.0]: https://github.com/lautbzehn/temper/releases/tag/v0.5.0
 [0.4.0]: https://github.com/lautbzehn/temper/releases/tag/v0.4.0
