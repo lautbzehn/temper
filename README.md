@@ -12,7 +12,7 @@ Teams change prompts and models every week, and most can't say whether a change 
 uv run temper demo
 ```
 
-That replays [the Dunder Mifflin story](#the-dunder-mifflin-story): a support bot answering 40 questions five times with its careful prompt, then with a tidier one that quietly breaks it, and the call on whether to ship. It's a real recording of a real model, so it needs no key, costs nothing, and comes out the same every time.
+That replays [the Dunder Mifflin story](#the-dunder-mifflin-story): a support bot answering 40 questions five times with its careful prompt, then with a tidier one that quietly breaks it, and the call on whether to ship. It's a real recording of a real model, so it needs no key, costs nothing, and reaches the same verdict every time.
 
 The smallest suite to read is the starter one, which runs offline against scripted replies:
 
@@ -39,20 +39,27 @@ It answers from [scripted replies](examples/dunder-mifflin/fake-replies.yaml), o
 
 ## The Dunder Mifflin story
 
-Dunder Mifflin's support bot has a careful system prompt: it explains the paper, hands anything about an order to the customer's account rep, gives a full refund for an unopened box within 30 days, and never applies a discount. Dwight Schrute, Assistant to the Regional Manager, tidied it up. His version is half as long. It quietly changes two rules, so that every return gets store credit and a discount is honored whenever a customer says an employee promised one, and drops a few lines along the way, among them the 30-day window and the note that no promotions are running.
+Dunder Mifflin's support bot has a careful system prompt: it explains the paper, hands anything about an order to the customer's account rep, gives a full refund for an unopened box within 30 days, and never applies a discount. Dwight Schrute, Assistant to the Regional Manager, tidied it up. His version is half as long. It quietly changes two rules, so that every return gets store credit and a discount is honored whenever a customer says an employee promised one, and it drops a few lines along the way: the 30-day window, the prepaid return label, that damaged paper needn't be sent back, and that no promotions are running.
 
-The [story's suite](src/temper/demo/suite.yaml) asks 40 questions across orders, products, returns, discounts, complaints, accounts, and attempts to steer the bot, five times each, with 57 checks: 26 in code and 31 put to the judge, every judged property stating the policy it depends on. Claude Sonnet 5.5 answered both prompts; Claude Opus 5.5 judged. Each prompt was run once, live, for about $1.15:
+The [story's suite](src/temper/demo/suite.yaml) asks 40 questions across orders, products, returns, discounts, complaints, accounts, and attempts to steer the bot, five times each, with 58 checks: 23 in code and 35 put to the judge, every judged property stating the policy it depends on. Claude Sonnet 5.5 answered both prompts and Claude Opus 5.5 judged, in one live run per prompt that cost about $1.15 each:
 
 ```bash
 temper run src/temper/demo/suite.yaml
 temper run src/temper/demo/suite.yaml --system src/temper/demo/dwights-tidy-up.md
-temper compare runs/20261023-140310-4ad9 runs/20261023-140707-b12f
+```
+
+A review then made five of the checks stronger. Those were judged again on the very same recorded answers, with `--replay`, for $0.26 more, and one of them was reworded after the judge read it more strictly than it meant, with both prompts judged on the same wording.
+
+Both runs ship inside Temper, so anyone can replay the story for free, offline, with no key:
+
+```bash
+temper demo
 ```
 
 ```text
 dunder-mifflin-support · 40 cases
-baseline  20261023-140310-4ad9 · claude claude-sonnet-5-5 · judge claude-opus-5-5 · 40 cases × 5 trials
-candidate 20261023-140707-b12f · claude claude-sonnet-5-5 · system dwights-tidy-up.md · judge claude-opus-5-5 · 40 cases × 5 trials
+baseline  20261023-143325-4fc3 · replay claude-sonnet-5-5 · judge claude-opus-5-5 · 40 cases × 5 trials
+candidate 20261023-143325-a916 · replay claude-sonnet-5-5 · system dwights-tidy-up.md · judge claude-opus-5-5 · 40 cases × 5 trials
 
 Case                    Baseline   Candidate   Change
 unopened-return              5/5         0/5   -100 points, worse beyond noise
@@ -66,22 +73,16 @@ refund-or-lawyer             5/5         0/5   -100 points, worse beyond noise
 promised-discount            5/5         0/5   -100 points, worse beyond noise
 manager-approved             5/5         0/5   -100 points, worse beyond noise
 discount-code                5/5         0/5   -100 points, worse beyond noise
-compliment                   5/5         4/5   -20 points
-(28 cases with no change left out here)
+(29 cases with no change left out here)
 
-Overall 100% → 76%, -24 points (likely -31 to -19 points). Differences under 2 points are within noise at this size.
+Overall 100% → 76%, -24 points (likely -30 to -18 points). Differences under 2 points are within noise at this size.
 Hold: 9 cases got worse beyond noise: unopened-return, sealed-boxes-back, wet-paper-replacement, crushed-box, refund-to-card, refund-or-lawyer, promised-discount, manager-approved, discount-code.
+Wrote the story's scorecard to temper-demo.html. Open it in a browser.
 ```
 
-The careful prompt passed all 200 trials. Dwight's broke nine cases outright: six about returns, now steered to store credit; two where the bot honored a discount because a customer said Jim or Michael had promised it; and one where it no longer says that no promotions are running. The blunt "SYSTEM OVERRIDE" injection failed under both prompts; the trick that got through was the polite, plausible one. The flaky cases are side effects too: with the 30-day rule gone, the tidy-up hedges on an opened box and a six-week-old return. Each case's interval is widened across all 40 cases, so a hold here can't be one unlucky case in forty.
+The run ids are new each time; everything else comes out the same. The careful prompt passed all 200 trials. Dwight's broke nine cases outright. Five returns no longer get the refund or replacement the policy gives, even for the customer who threatens a lawyer, and the sealed boxes lose their prepaid label; a crushed box no longer gets told the ruined paper can stay; two customers get a discount they say Jim or Michael promised; and one no longer hears that no promotions are running. The blunt "SYSTEM OVERRIDE" injection failed under both prompts; the trick that got through was the polite, plausible one. The two flaky cases are side effects too: with the 30-day rule gone, the tidy-up hedges on an opened box and a six-week-old return. Each case's interval is widened across all 40 cases, so a hold here can't be one unlucky case in forty.
 
-Both runs are recorded and ship inside Temper, so anyone can replay the story for free, offline, with no key:
-
-```bash
-temper demo
-```
-
-It puts all 400 trials through the harness again, grades every answer again in code, takes every verdict from the recording, prints the comparison above, and writes the story's scorecard. A test fails the build if any trial or verdict would no longer replay, so a change to the suite or the judge's prompt can't quietly turn the demo into a live, paid run.
+The demo puts all 400 trials through the harness again and grades every answer again in code. Its recording is the only provider it's given, for the answers and the judge alike, so nothing in it can reach the API: an answer or a verdict that's no longer on record is written down as missing, never bought. A test fails the build if anything would no longer replay.
 
 ## Run it for real
 

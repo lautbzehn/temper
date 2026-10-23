@@ -105,6 +105,8 @@ def test_a_comparison_page_leads_with_the_call(tmp_path: Path) -> None:
     assert "Hold: worse overall beyond noise." in page.text
     assert "Overall 100% → 0%, -100 points (likely -100 to -18 points)." in page.text
     assert "Each case set against its twin in the baseline run" in page.text
+    assert f"Candidate {candidate.manifest.run_id} · fake fake-2" in page.text
+    assert f"Baseline {baseline.manifest.run_id} · fake fake-1" in page.text
     assert page.text.index("Candidate") < page.text.index(
         "Baseline", page.text.index("Every trial")
     )

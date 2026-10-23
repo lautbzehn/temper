@@ -112,7 +112,7 @@ def build_scorecard(run: Run, baseline: Run | None = None) -> str:
     compared = compare(baseline, run) if baseline is not None else None
     manifest = run.manifest
     sections = [
-        _header(manifest),
+        _header(manifest, compared.baseline if compared is not None else None),
         _verdict(compared) if compared is not None else None,
         _summary(run, compared),
         _comparison_table(compared) if compared is not None else _run_table(run),
@@ -132,12 +132,21 @@ def build_scorecard(run: Run, baseline: Run | None = None) -> str:
     return f"<!doctype html>\n{page.html}\n"
 
 
-def _header(manifest: Manifest) -> Markup:
+def _header(manifest: Manifest, baseline: Manifest | None) -> Markup:
+    """The suite's name, then the run, or both runs when one is set against the other."""
     when = manifest.finished_at or manifest.started_at
+    runs = (
+        [("Run", manifest)]
+        if baseline is None
+        else [("Candidate", manifest), ("Baseline", baseline)]
+    )
     return element(
         "header",
         element("h1", manifest.suite),
-        element("p", f"Run {manifest.run_id} · {prose.described(manifest)}", class_="dim"),
+        *(
+            element("p", f"{role} {run.run_id} · {prose.described(run)}", class_="dim")
+            for role, run in runs
+        ),
         element("p", f"{when:%m.%d.%Y %H:%M} UTC", class_="dim"),
     )
 

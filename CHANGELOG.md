@@ -8,9 +8,13 @@ The Dunder Mifflin story: a real recorded run of a prompt change that quietly br
 
 ### Added
 
-- `temper demo`: the story replayed from its recording, for free, offline, with no key. All 400 trials go through the harness again, every answer is graded again in code, and every verdict comes from the recording. It prints the comparison and writes the story's scorecard.
-- The story itself, shipped inside the package: a 40-case support suite with 57 checks (31 of them judged), the careful prompt, Dwight's tidy-up, and one live run of each, five trials per case. The careful prompt passed all 200 trials; the tidy-up broke nine cases beyond noise and is held.
-- `temper run --system FILE` answers the same cases with another system prompt, to compare two prompts. The prompt is held inline from the start, the run's options name it, a resume applies it again, and every report names the prompt that answered.
+- `temper demo`: the story replayed from its recording, for free, offline, with no key. All 400 trials go through the harness again and every answer is graded again in code. The recording is the only provider the replay is given, for answers and verdicts alike, so nothing in it can reach the API. It prints the comparison and writes the story's scorecard.
+- The story itself, shipped inside the package: a 40-case support suite with 58 checks (35 of them judged), the careful prompt, Dwight's tidy-up, and one live run of each, five trials per case, with the API's request ids left out of the shipped copies. The careful prompt passed all 200 trials; the tidy-up broke nine cases beyond noise and is held.
+- `temper run --system FILE` answers the same cases with another system prompt, to compare two prompts. The scorecard names both runs and their prompts, and a dry run names the prompt it priced.
+
+### Changed
+
+- Planning swaps in a run's system prompt, and `start_run` takes the plan rather than a suite, so no path can answer one prompt while the manifest names another. A run's `replay` and `system` files are held as absolute paths, so a run resumes from any folder.
 
 ## [0.4.0] · 10.23.2026
 

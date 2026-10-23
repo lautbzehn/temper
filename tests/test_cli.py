@@ -778,3 +778,14 @@ def test_a_system_prompt_that_cannot_be_read_stops_the_run_before_it_begins(file
     assert result.exit_code == 1
     assert "can't read the system prompt" in result.output
     assert not out.exists()
+
+
+def test_a_dry_run_names_the_prompt_it_priced(files: Files) -> None:
+    suite = prompted_suite(files)
+
+    result = runner.invoke(
+        app, ["run", str(suite), "--system", str(files.root / "other.md"), "--dry-run"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "prompted · system other.md · dry run · 3 trials per case" in result.output
