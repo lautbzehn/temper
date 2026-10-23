@@ -8,6 +8,7 @@ any one case: a case that broke is a regression even when the average hides it.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -68,7 +69,7 @@ class Comparison:
         if rate is None or change is None:
             return None
         scored = trials_to_tell(rate, change)
-        return None if scored is None else -(-scored // len(self.changes))
+        return None if scored is None else math.ceil(scored / len(self.changes))
 
 
 def compare(baseline: Run, candidate: Run) -> Comparison:

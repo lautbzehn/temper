@@ -189,11 +189,7 @@ class Run(BaseModel):
     @property
     def rates(self) -> dict[str, Rate]:
         """Each case's pass rate over its scored trials, in suite order."""
-        return {
-            case_id: Rate(sum(result.passed is True for result in scored), len(scored))
-            for case_id, results in self.by_case().items()
-            for scored in [[result for result in results if result.scored]]
-        }
+        return {case_id: _rate_of(results) for case_id, results in self.by_case().items()}
 
     @property
     def flaky(self) -> tuple[str, ...]:
@@ -239,6 +235,11 @@ class Run(BaseModel):
 def _kept(path: Path, kind: type[Record]) -> Iterator[Record]:
     """The records in a file the run writes as it goes, which isn't there until the first one."""
     return jsonl.read(path, kind) if path.exists() else iter(())
+
+
+def _rate_of(results: Iterable[TrialResult]) -> Rate:
+    scored = [result for result in results if result.scored]
+    return Rate(sum(result.passed is True for result in scored), len(scored))
 
 
 def _priced(costs: Iterable[float | None]) -> float | None:

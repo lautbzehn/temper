@@ -167,7 +167,7 @@ def _run_table(run: Run) -> Markup:
         element(
             "tr",
             element("th", element("a", case_id, href=f"#case-{case_id}"), scope="row"),
-            element("td", f"{rates[case_id].passed}/{rates[case_id].scored}", class_="count"),
+            element("td", prose.count(rates[case_id]), class_="count"),
             element("td", _likely(rates[case_id]), class_="likely"),
             element("td", prose.notes(rates[case_id], results, failures.get(case_id, []))),
         )
@@ -187,8 +187,8 @@ def _comparison_table(compared: Comparison) -> Markup:
             element(
                 "th", element("a", change.case_id, href=f"#case-{change.case_id}"), scope="row"
             ),
-            element("td", _count(change.difference.baseline), class_="count"),
-            element("td", _count(change.difference.candidate), class_="count"),
+            element("td", prose.count(change.difference.baseline), class_="count"),
+            element("td", prose.count(change.difference.candidate), class_="count"),
             element("td", _change(change.difference), class_="likely"),
         )
         for change in compared.changes
@@ -206,10 +206,6 @@ def _table(caption: str, headers: Sequence[str], rows: Sequence[Markup]) -> Mark
         "table", element("caption", caption), element("thead", heading), element("tbody", *rows)
     )
     return element("div", table, class_="table")
-
-
-def _count(rate: Rate) -> str:
-    return f"{rate.passed}/{rate.scored}"
 
 
 def _likely(rate: Rate) -> Markup:
@@ -260,7 +256,7 @@ def _trials(run: Run, baseline: Run | None) -> Markup:
         rate = rates[case_id]
         asked = results[0].request.messages if results else ()
         parts: list[Markup | None] = [
-            element("summary", f"{case_id} · {rate.passed}/{rate.scored} passed"),
+            element("summary", f"{case_id} · {prose.count(rate)} passed"),
             *(
                 element(
                     "p", element("strong", f"{turn.role}: "), _clip(turn.content), class_="turn"

@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import re
-from functools import cache
 from html.parser import HTMLParser
-from pathlib import Path
-from tempfile import mkdtemp
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,6 +16,8 @@ from temper.wording import dollars
 from tests.support import Scripted, answer, case, judged, make_suite, run, verdict
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from temper.results import Run
 
 # Every tag a scorecard may hold. Anything else, a <script> above all, is a leak.
@@ -60,10 +59,10 @@ def judged_run(out: Path, *, reply: str = "Sorry about that!", model: str = "fak
     return run(suite, answers, out, judge=judge)
 
 
-@cache
-def template() -> Run:
-    """One judged run, kept for the property tests to rewrite."""
-    return judged_run(Path(mkdtemp()))
+@pytest.fixture(scope="module")
+def template(tmp_path_factory: pytest.TempPathFactory) -> Run:
+    """One judged run, kept for the property test to rewrite."""
+    return judged_run(tmp_path_factory.mktemp("template"))
 
 
 def test_a_run_page_says_what_the_terminal_says(tmp_path: Path) -> None:
@@ -149,8 +148,10 @@ text_from_a_model = st.text(st.characters(codec="utf-8"), min_size=1)
 
 @settings(max_examples=150, deadline=None)
 @given(reply=text_from_a_model, name=text_from_a_model, model=text_from_a_model)
-def test_nothing_from_a_run_ever_becomes_markup(reply: str, name: str, model: str) -> None:
-    base = template()
+def test_nothing_from_a_run_ever_becomes_markup(
+    template: Run, reply: str, name: str, model: str
+) -> None:
+    base = template
     results = tuple(
         result.model_copy(
             update={"completion": result.completion.model_copy(update={"text": reply})}

@@ -50,8 +50,9 @@ def render_run(run: Run, console: Console) -> None:
 
     console.print(Text.assemble((prose.tally(run), "bold"), _joined(prose.left_out(run))))
     if run.rate.scored:
+        noise = prose.noise(run.rate)
         flaky = prose.flaky(run)
-        console.print(Text(" ".join(filter(None, (prose.noise(run.rate), flaky))), style="dim"))
+        console.print(Text(f"{noise} {flaky}" if flaky else noise, style="dim"))
     if (cost := prose.cost(run)) is not None:
         console.print(Text(cost, style="dim"))
 
@@ -96,7 +97,7 @@ def render_findings(findings: Sequence[Finding], console: Console) -> None:
 
 
 def _count(rate: Rate) -> Text:
-    return Text(f"{rate.passed}/{rate.scored}", style=_tone(rate.passed, rate.scored))
+    return Text(prose.count(rate), style=_tone(rate.passed, rate.scored))
 
 
 def _shade(direction: Direction | None) -> str:

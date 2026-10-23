@@ -22,7 +22,7 @@ from temper.runner import run_suite
 from temper.suite import Message, Suite
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Sequence
 
 DEFAULT_MODELS = ("claude-sonnet-5-5", "claude-opus-5-5")
 LEAST_PYTHON = (3, 11)
@@ -74,7 +74,7 @@ def _credentials(claude: ClaudeProvider) -> Finding:
     return Finding("Credentials", ok=True, note=f"{source}, never shown here")
 
 
-def _models(suite: Suite | None) -> Iterable[str]:
+def _models(suite: Suite | None) -> Sequence[str]:
     if suite is None:
         return DEFAULT_MODELS
     models = (

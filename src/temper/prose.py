@@ -27,6 +27,11 @@ def described(manifest: Manifest) -> str:
     return f"{manifest.provider}{model}{judged} · {cases} × {plural(manifest.trials, 'trial')}"
 
 
+def count(rate: Rate) -> str:
+    """`3/3`: how many passed of how many were scored."""
+    return f"{rate.passed}/{rate.scored}"
+
+
 def tally(run: Run) -> str:
     """`14 of 15 scored trials passed (93%, likely 70 to 99%)`."""
     rate = run.rate
