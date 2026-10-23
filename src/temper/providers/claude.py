@@ -115,14 +115,24 @@ class ClaudeProvider:
         """Close the client's connections."""
         await self._client.close()
 
+    def credentials_source(self) -> str | None:
+        """Where the credentials come from, or None when there are none. Never what they are."""
+        client = self._client
+        if client.api_key is not None:
+            return "an API key"
+        if client.auth_token is not None:
+            return "an auth token"
+        if client.credentials is not None:
+            return "a profile"
+        return None
+
     def _require_credentials(self) -> None:
         """Refuse to call the API with no credentials.
 
         Checked on every call rather than when the provider is built, so a
         suite can be validated and replayed with no credentials at all.
         """
-        client = self._client
-        if client.api_key is None and client.auth_token is None and client.credentials is None:
+        if self.credentials_source() is None:
             raise ProviderError(_NO_CREDENTIALS)
 
 

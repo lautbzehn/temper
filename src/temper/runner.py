@@ -159,6 +159,7 @@ def manifest_for(suite: Suite, providers: Providers, options: RunOptions) -> Man
         provider="replay" if options.replay else suite.target.provider,
         model=suite.target.model,
         judge=suite.judge.model if suite.judged else None,
+        cases_fingerprint=cases_fingerprint(suite),
         charges=providers.charges,
         case_ids=tuple(case.id for case in suite.cases),
         trials=options.trials or suite.trials,
@@ -171,8 +172,14 @@ def manifest_for(suite: Suite, providers: Providers, options: RunOptions) -> Man
 
 
 def fingerprint(suite: Suite) -> str:
-    """A short hash of everything the suite says, so runs of different suites never get compared."""
+    """A short hash of everything the suite says, so a run is only resumed with its own suite."""
     return hashlib.sha256(suite.model_dump_json(by_alias=True).encode()).hexdigest()[:16]
+
+
+def cases_fingerprint(suite: Suite) -> str:
+    """A short hash of the cases alone, so two runs can be compared across a change of target."""
+    cases = "\n".join(case.model_dump_json(exclude={"tags"}) for case in suite.cases)
+    return hashlib.sha256(cases.encode()).hexdigest()[:16]
 
 
 def backoff(attempt: int, retry_after: float | None, *, base: float) -> float:

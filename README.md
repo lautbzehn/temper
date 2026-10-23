@@ -2,9 +2,9 @@
 
 **Test AI features the way you test code, and know when a difference is real.**
 
-Teams change prompts and models every week, and most can't say whether a change made things better, worse, or just different. Temper runs a suite of cases against an AI feature, several times each, grades every answer, and keeps an honest record of what happened: a failed call is never written down as a wrong answer, and every run says what it cost. Where code can't decide, a second model judges, and the judge is measured against your own labels before it is believed. Coming milestones add error bars and a plain-English verdict: ship it, or hold.
+Teams change prompts and models every week, and most can't say whether a change made things better, worse, or just different. Temper runs a suite of cases against an AI feature, several times each, grades every answer, and keeps an honest record of what happened: a failed call is never written down as a wrong answer, and every run says what it cost. Where code can't decide, a second model judges, and the judge is measured against your own labels before it is believed. Every number comes with how sure it is, and two runs end in a plain-English verdict: ship it, or hold.
 
-> **Status:** early and private. Milestone 2 of 6 is done: nine kinds of check, checks of your own, and an AI judge with a calibration loop. The roadmap is [below](#roadmap).
+> **Status:** early and private. Milestone 3 of 6 is done: every pass rate has its error bar, two runs can be compared with a ship-or-hold verdict, and a build can fail on a regression. The roadmap is [below](#roadmap).
 
 ## Try it
 
@@ -16,14 +16,15 @@ uv run temper run examples/dunder-mifflin/suite.yaml
 Keeping this run in runs/20261022-160459-0be0
 dunder-mifflin-support · fake · 5 cases × 3 trials
 
-Case                  Passed   Notes
-order-status             3/3
-paper-weight             3/3
-unopened-return          3/3
-discount-injection       3/3
-wet-paper-complaint      2/3   trial 2: never says "sorry"
+Case                  Passed   Likely rate   Notes
+order-status             3/3   44 to 100%
+paper-weight             3/3   44 to 100%
+unopened-return          3/3   44 to 100%
+discount-injection       3/3   44 to 100%
+wet-paper-complaint      2/3   21 to 94%     flaky · trial 2: never says "sorry"
 
-14 of 15 scored trials passed (93%)
+14 of 15 scored trials passed (93%, likely 70 to 99%)
+Differences under 24 points are within noise at this size. 1 flaky case: passed some trials, failed others.
 ```
 
 The example is a support bot for Dunder Mifflin Paper Company. It runs offline against [scripted replies](examples/dunder-mifflin/fake-replies.yaml), one of which loses its temper on trial 2, so you can see a failure without an API key. Every name in it is fictional, borrowed from The Office.
@@ -68,7 +69,49 @@ An answer is `complete`, `truncated` (it hit `max_tokens`), or `refused`. Pass r
 
 A check can also reach no verdict: the judge was down, or a `cost` check met a model with no list price. That trial isn't scored either, the grade says why, and the summary counts how many were left out. A missing verdict is never a failed check.
 
-`temper run` exits 0 when every trial was answered and 2 when some weren't, with the `temper resume` command that picks them up. The results aren't judged yet; that verdict, and failing a CI build on it, arrives in M3.
+`temper run` exits 0 when every trial was answered and 2 when some weren't, with the `temper resume` command that picks them up.
+
+## Know when a difference is real
+
+Three trials of a case can't tell you much, and Temper says so. Every pass rate comes with the range the true rate is likely in, a 95% Wilson interval, which is wide at three trials and narrows as trials grow. A run also states its noise floor: the smallest change from its rate that would count as beyond noise at this size. A change under the floor is never called real, whichever way it goes.
+
+To decide whether a new prompt or model may ship, run the suite with each and compare the two runs. Here the candidate is the example with one thing changed: its return answer now says all sales are final.
+
+```bash
+temper compare runs/20261023-030221-d1ec runs/20261023-030221-af4f --fail-on-regression
+```
+
+```text
+dunder-mifflin-support · 5 cases
+baseline  20261023-030221-d1ec · fake · 5 cases × 3 trials
+candidate 20261023-030221-af4f · fake dwights-tidy-up · 5 cases × 3 trials
+
+Case                  Baseline   Candidate   Change
+order-status               3/3         3/3   +0 points
+paper-weight               3/3         3/3   +0 points
+unopened-return            3/3         0/3   -100 points, worse beyond noise
+discount-injection         3/3         3/3   +0 points
+wet-paper-complaint        2/3         3/3   +33 points
+
+Overall 93% → 80%, -13 points (likely -39 to +13 points). Differences under 30 points are within noise at this size.
+Hold: 1 case got worse beyond noise: unopened-return.
+```
+
+Each case is set against its twin, so a case that broke shows as a regression even when the average hides it. The per-case intervals are widened so that one false alarm among all the cases stays as unlikely as one alone, which is why five trials of a case can show a clean break while three can't. The call is to hold when anything got worse beyond noise, overall or on one case; to make no call when a case has nothing scored in either run, since a candidate that refused everything must not ship on the strength of an empty table; and to ship otherwise. When the overall change is undecided at this size, the report says how many trials per case would settle it. With `--fail-on-regression` the command exits 3 whenever the candidate can't ship, which is the CI gate. Two runs are comparable when their cases are the same; the target may differ, and that's the point, and if the judge differs the report says so.
+
+`temper doctor` checks the wiring without spending anything: Python, credentials (named by source, never shown), each model the suite needs, whether runs could be kept where they go, and an offline run through the real runner. A suite that names no Claude model needs no credentials, and the doctor says so instead of asking for them.
+
+## The scorecard
+
+`temper scorecard` writes a run as one HTML file, beside the run unless told otherwise, to read in any browser, share, or keep:
+
+```bash
+temper scorecard runs/20261023-030221-af4f --baseline runs/20261023-030221-d1ec
+```
+
+It leads with the call when there's a baseline, then the tally, the noise floor, and a table of every case with its likely range drawn as a bar. Below that, every case opens up to show the question and each trial's full answer with every grade. It says exactly what the terminal says, because both read their sentences from one place.
+
+The page is built so that a model's answer can never become part of it. Every piece of text goes through a small HTML builder that escapes it on the way in, so an answer containing `<script>` is shown as text. A property test checks that against 150 random answers, suite names, and model names every time the tests run. The page loads nothing and runs nothing: no scripts, no fonts, no network, and a content policy that forbids them even if something slipped through. Long answers are clipped and say how much more is in `results.jsonl`. The same run always makes the same page, byte for byte. It's light by default, follows the reader's dark mode, meets WCAG AA contrast in both, and never uses color alone to say what happened.
 
 ## A suite, start to finish
 
@@ -231,10 +274,11 @@ If you have five minutes, start here:
 
 1. [`runner.py`](src/temper/runner.py) runs every case and trial side by side under a concurrency limit, with `asyncio.TaskGroup`, and sends answers and verdicts through one pipe that owns the retries, the time limit, the budget, and the check that the right model answered, after looking in the run's own recording so nothing is bought twice.
 2. [`judge.py`](src/temper/judge.py) turns a judge check into a request: the question with the property last, the verdict's JSON shape with the reason first, and the grade read back from what came.
-3. [`results.py`](src/temper/results.py) is the run folder: answers and failures are written the moment they land, read back in suite order, and a run can be picked up where it stopped.
-4. [`calibration.py`](src/temper/calibration.py) sets the judge against your labels, with Cohen's kappa for the agreement chance would give anyway.
-5. [`loading.py`](src/temper/loading.py) parses the YAML once into both data and a map of where everything starts, so every problem, Pydantic's or Temper's own, can point at its line.
-6. [`test_claude.py`](tests/test_claude.py) drives the real SDK through a mock transport, so rate limits, outages, refusals, and bad keys are all exercised without a network.
+3. [`stats.py`](src/temper/stats.py) is a short module of closed-form statistics: Wilson intervals, Newcombe's interval on a difference, the noise floor, and how many trials would settle a change. Its property tests say what the numbers must always do.
+4. [`results.py`](src/temper/results.py) is the run folder: answers and failures are written the moment they land, read back in suite order, and a run can be picked up where it stopped.
+5. [`calibration.py`](src/temper/calibration.py) sets the judge against your labels, with Cohen's kappa for the agreement chance would give anyway.
+6. [`loading.py`](src/temper/loading.py) parses the YAML once into both data and a map of where everything starts, so every problem, Pydantic's or Temper's own, can point at its line.
+7. [`test_claude.py`](tests/test_claude.py) drives the real SDK through a mock transport, so rate limits, outages, refusals, and bad keys are all exercised without a network.
 
 The [decision notes](docs/adr/README.md) explain why things are built the way they are.
 
@@ -260,8 +304,8 @@ uv run mypy              # strict type checks
 | M0 · Walking skeleton | Suite format, validation, async runner, scripted provider, three text checks | Done |
 | M1 · Real runs, honest numbers | Claude as a provider, record and replay, retries and budgets, failures kept apart from wrong answers | Done |
 | M2 · Graders you can trust | Nine kinds of check, checks of your own, and an AI judge calibrated against your labels | Done |
-| M3 · Decisions, not dashboards | Error bars, comparing runs, a ship-or-hold verdict, and an HTML scorecard | Next |
-| M4 · The Dunder Mifflin story | A real support bot, a prompt change that quietly breaks it, and Temper catching it | Planned |
+| M3 · Decisions, not dashboards | Error bars, comparing runs, a ship-or-hold verdict, and an HTML scorecard | Done |
+| M4 · The Dunder Mifflin story | A real support bot, a prompt change that quietly breaks it, and Temper catching it | Next |
 | M5 · Launch | PyPI release, public repo, and docs | Planned |
 
 The full plan is in [`docs/plan_v2.0_10.21.2026.md`](docs/plan_v2.0_10.21.2026.md).

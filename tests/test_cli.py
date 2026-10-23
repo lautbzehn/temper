@@ -3,18 +3,16 @@ from __future__ import annotations
 import json
 import runpy
 import sys
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import httpx2
 import pytest
-from anthropic import AsyncAnthropic, DefaultAsyncHttpxClient
 from typer.testing import CliRunner
 
 from temper import __version__
 from temper.checks import check_kinds
 from temper.cli import app
 from temper.errors import PluginError
-from tests.support import EXAMPLE, local_api
+from tests.support import EXAMPLE, local_api, mock_client
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -58,7 +56,7 @@ def test_run_grades_the_example_and_keeps_the_results(tmp_path: Path) -> None:
     result = runner.invoke(app, ["run", str(EXAMPLE), "--out", str(tmp_path)])
 
     assert result.exit_code == 0, result.output
-    assert "14 of 15 scored trials passed (93%)" in result.output
+    assert "14 of 15 scored trials passed (93%," in result.output
     assert 'trial 2: never says "sorry"' in result.output
     [folder] = tmp_path.iterdir()
     assert {path.name for path in folder.iterdir()} == {"manifest.json", "results.jsonl"}
@@ -67,7 +65,7 @@ def test_run_grades_the_example_and_keeps_the_results(tmp_path: Path) -> None:
 def test_run_can_change_the_number_of_trials(tmp_path: Path) -> None:
     result = runner.invoke(app, ["run", str(EXAMPLE), "--trials", "1", "--out", str(tmp_path)])
 
-    assert "5 of 5 scored trials passed (100%)" in result.output
+    assert "5 of 5 scored trials passed (100%," in result.output
 
 
 def suite_with(files: Files, replies: str, *, cases: str, trials: int = 1) -> Path:
@@ -98,7 +96,7 @@ def test_run_keeps_going_past_a_failed_trial_and_says_how_to_resume(files: Files
     result = runner.invoke(app, ["run", str(path), "--out", str(out)])
 
     assert result.exit_code == 2
-    assert "1 of 1 scored trial passed (100%)" in result.output
+    assert "1 of 1 scored trial passed (100%," in result.output
     assert "1 attempt failed: provider" in result.output
     assert "Try the unanswered trials again with: temper resume" in result.output
     [folder] = out.iterdir()
@@ -123,7 +121,7 @@ def test_resume_answers_what_is_missing_and_finishes_the_run(files: Files) -> No
     result = runner.invoke(app, ["resume", str(folder)])
 
     assert result.exit_code == 0, result.output
-    assert "2 of 2 scored trials passed (100%)" in result.output
+    assert "2 of 2 scored trials passed (100%," in result.output
 
 
 def test_resume_refuses_a_folder_that_is_not_a_run(tmp_path: Path) -> None:
@@ -145,7 +143,7 @@ def test_run_reports_a_case_that_never_passed(files: Files) -> None:
 
     assert result.exit_code == 0
     assert "0/2" in result.output
-    assert "0 of 2 scored trials passed (0%)" in result.output
+    assert "0 of 2 scored trials passed (0%," in result.output
 
 
 def test_run_stops_before_running_when_runs_cannot_be_kept(files: Files) -> None:
@@ -403,33 +401,6 @@ def claude_suite(files: Files, *, model: str = "claude-sonnet-5-5", cases: int =
     )
 
 
-def mock_client(**settings: Any) -> AsyncAnthropic:
-    """A client for a pretend API: it greets, or gives a passing verdict when asked for JSON."""
-
-    def api(request: httpx2.Request) -> httpx2.Response:
-        asked = json.loads(request.content)
-        if request.url.path.endswith("count_tokens"):
-            return httpx2.Response(200, json={"input_tokens": 10})
-        shaped = "format" in asked.get("output_config", {})
-        text = '{"reason": "It greets.", "passed": true}' if shaped else "Hello!"
-        return httpx2.Response(
-            200,
-            json={
-                "id": "msg_1",
-                "type": "message",
-                "role": "assistant",
-                "model": asked["model"],
-                "content": [{"type": "text", "text": text}],
-                "stop_reason": "end_turn",
-                "stop_sequence": None,
-                "usage": {"input_tokens": 10, "output_tokens": 5},
-            },
-        )
-
-    transport = httpx2.MockTransport(api)
-    return AsyncAnthropic(**settings, http_client=DefaultAsyncHttpxClient(transport=transport))
-
-
 def judged_suite(files: Files) -> Path:
     return files.write(
         "suite.yaml",
@@ -469,7 +440,7 @@ def test_a_judged_run_asks_the_judge_and_says_what_it_cost(
 
     assert result.exit_code == 0, result.output
     assert "judged · claude claude-sonnet-5-5 · judge claude-opus-5-5 · 1 case" in result.output
-    assert "1 of 1 scored trial passed (100%)" in result.output
+    assert "1 of 1 scored trial passed (100%," in result.output
     assert "of it on the judge" in result.output
     [folder] = out.iterdir()
     recorded = [json.loads(line) for line in (folder / "recording.jsonl").read_text().splitlines()]
@@ -592,3 +563,139 @@ def test_python_dash_m_temper_runs_the_cli(monkeypatch: pytest.MonkeyPatch) -> N
         runpy.run_module("temper", run_name="__main__")
 
     assert finished.value.code == 0
+
+
+def two_runs(files: Files, *, broken: bool) -> tuple[Path, Path]:
+    """A baseline and a candidate run of one case, the candidate failing it when `broken`."""
+    files.write("good.yaml", "a: 'yes'\n")
+    files.write("bad.yaml", "a: 'no'\n")
+    paths = []
+    plan = (("baseline", "good.yaml"), ("candidate", "bad.yaml" if broken else "good.yaml"))
+    for name, replies in plan:
+        suite = files.write(
+            f"{name}.yaml",
+            f"""
+            schema: 1
+            name: small
+            target: {{provider: fake, model: {name}, options: {{replies: {replies}}}}}
+            trials: 3
+            cases:
+              - {{id: a, input: Hi, checks: [{{type: contains, text: "yes"}}]}}
+            """,
+        )
+        out = files.root / name
+        assert runner.invoke(app, ["run", str(suite), "--out", str(out)]).exit_code == 0
+        [folder] = out.iterdir()
+        paths.append(folder)
+    return paths[0], paths[1]
+
+
+def test_compare_holds_a_broken_candidate_and_can_fail_the_build(files: Files) -> None:
+    baseline, candidate = two_runs(files, broken=True)
+
+    plain = runner.invoke(app, ["compare", str(baseline), str(candidate)])
+    gated = runner.invoke(app, ["compare", str(baseline), str(candidate), "--fail-on-regression"])
+
+    assert plain.exit_code == 0
+    assert "Hold: 1 case got worse beyond noise: a." in plain.output
+    assert gated.exit_code == 3
+
+
+def test_compare_ships_a_candidate_that_held_up(files: Files) -> None:
+    baseline, candidate = two_runs(files, broken=False)
+
+    result = runner.invoke(app, ["compare", str(baseline), str(candidate), "--fail-on-regression"])
+
+    assert result.exit_code == 0, result.output
+    assert "Ship: nothing got worse beyond noise." in result.output
+
+
+def test_compare_refuses_runs_of_different_cases(files: Files, tmp_path: Path) -> None:
+    baseline, _ = two_runs(files, broken=False)
+    out = tmp_path / "example"
+    runner.invoke(app, ["run", str(EXAMPLE), "--out", str(out)])
+    [other] = out.iterdir()
+
+    result = runner.invoke(app, ["compare", str(baseline), str(other)])
+
+    assert result.exit_code == 1
+    assert "are of different cases" in result.output
+
+
+def test_doctor_checks_the_wiring_without_spending(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    monkeypatch.setattr("temper.providers.claude.AsyncAnthropic", mock_client)
+
+    result = runner.invoke(app, ["doctor", "--out", str(files.root / "runs")])
+
+    assert result.exit_code == 0, result.output
+    assert "✓ Credentials: an API key, never shown here" in result.output
+    assert SECRET not in result.output
+    assert "✓ Model claude-sonnet-5-5: known to the API; a one-word question is 10 tokens" in (
+        result.output
+    )
+    assert "✓ Model claude-opus-5-5:" in result.output
+    assert "✓ Runs folder:" in result.output
+    assert "✓ Offline run: 1 of 1 passed" in result.output
+
+
+def test_doctor_probes_a_suites_own_models_and_fails_without_credentials(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(files.root))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(files.root))
+    suite = claude_suite(files, model="claude-haiku-5-5")
+
+    result = runner.invoke(app, ["doctor", str(suite), "--out", str(files.root / "runs")])
+
+    assert result.exit_code == 1
+    assert "✗ Credentials: none found; set ANTHROPIC_API_KEY" in result.output
+    assert "✗ Model claude-haiku-5-5: no Anthropic credentials found" in result.output
+    assert "claude-sonnet-5-5" not in result.output
+
+
+def test_scorecard_writes_one_page_beside_the_run_or_where_asked(files: Files) -> None:
+    baseline, candidate = two_runs(files, broken=True)
+
+    beside = runner.invoke(app, ["scorecard", str(candidate)])
+    elsewhere = files.root / "card.html"
+    compared = runner.invoke(
+        app, ["scorecard", str(candidate), "--baseline", str(baseline), "--out", str(elsewhere)]
+    )
+
+    assert beside.exit_code == 0, beside.output
+    assert f"Wrote {candidate / 'scorecard.html'}" in beside.output
+    assert (candidate / "scorecard.html").read_text(encoding="utf-8").startswith("<!doctype html>")
+    assert compared.exit_code == 0, compared.output
+    assert "Hold: 1 case got worse beyond noise: a." in elsewhere.read_text(encoding="utf-8")
+
+
+def test_scorecard_says_plainly_when_it_cannot_write(files: Files) -> None:
+    _, candidate = two_runs(files, broken=False)
+    blocked = files.root / "not-a-folder"
+    blocked.write_text("", encoding="utf-8")
+
+    result = runner.invoke(app, ["scorecard", str(candidate), "--out", str(blocked / "card.html")])
+
+    assert result.exit_code == 1
+    assert "can't write the scorecard to" in result.output
+
+
+def test_doctor_asks_for_no_credentials_when_the_suite_needs_none(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(files.root))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(files.root))
+
+    result = runner.invoke(app, ["doctor", str(EXAMPLE), "--out", str(files.root / "runs")])
+
+    assert result.exit_code == 0, result.output
+    assert "✓ Credentials: not needed: the suite names no Claude model" in result.output
+    assert "Model" not in result.output
+    assert not (files.root / "runs").exists()

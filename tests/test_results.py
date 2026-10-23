@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import json
 from typing import TYPE_CHECKING
 
 import pytest
+from rich.console import Console
 
 from temper import jsonl
 from temper.errors import RunError
@@ -12,6 +14,8 @@ from temper.planning import Providers
 from temper.providers import FakeProvider, Recording, Request, Usage
 from temper.results import Manifest, Run, RunFolder, RunOptions, TrialResult
 from temper.runner import manifest_for
+from temper.stats import Rate
+from temper.summary import render_run
 from tests.support import Scripted, answer, case, make_suite, run, verdict
 
 if TYPE_CHECKING:
@@ -196,3 +200,22 @@ def test_a_run_folder_with_a_bad_line_says_which_line(tmp_path: Path) -> None:
 
     with pytest.raises(RunError, match=r"line 1 of .*results\.jsonl"):
         RunFolder.open(folder)
+
+
+def test_a_run_knows_its_rates_and_its_flaky_cases(tmp_path: Path) -> None:
+    finished = sample_run(tmp_path)
+
+    assert finished.rate == Rate(3, 4)
+    assert finished.rates == {"steady": Rate(2, 2), "wobbly": Rate(1, 2)}
+    assert finished.flaky == ("wobbly",)
+    assert finished.manifest.cases_fingerprint is not None
+
+
+def test_a_run_with_nothing_scored_still_has_a_summary(tmp_path: Path) -> None:
+    finished = sample_run(tmp_path).model_copy(update={"results": ()})
+    buffer = io.StringIO()
+
+    render_run(finished, Console(file=buffer, width=120))
+
+    assert "0 of 0 scored trials passed" in buffer.getvalue()
+    assert "within noise" not in buffer.getvalue()
