@@ -73,7 +73,10 @@ uv run mypy
 | `src/temper/stats.py` | Wilson intervals, Newcombe's interval on a change, the noise floor, trials to tell a change |
 | `src/temper/comparison.py` | Two runs of the same cases side by side, and the ship-or-hold call |
 | `src/temper/doctor.py` | The check-up: Python, credentials by source, models, the runs folder, an offline run |
+| `src/temper/prose.py` | The sentences both reports say about a run or a comparison, so they never disagree |
 | `src/temper/summary.py` | The terminal summary, the dry-run estimate, the calibration report, the comparison, the check-up |
+| `src/temper/markup.py` | Building HTML so text can never become markup: everything escaped on the way in |
+| `src/temper/scorecard.py` | The single-file HTML scorecard: loads nothing, runs nothing, same run same page |
 | `src/temper/cli.py` | The `temper` command, a thin layer over the library |
 | `src/temper/errors.py` | Every error a person might see |
 | `src/temper/files.py`, `jsonl.py`, `wording.py` | Reading files as UTF-8, records one per line, and the plurals and dollars people read |

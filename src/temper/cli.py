@@ -20,6 +20,7 @@ from temper.loading import load_suite
 from temper.planning import estimate_suite, plan_run, providers_for
 from temper.results import RunFolder, RunOptions
 from temper.runner import complete_run, reopen_run, start_run
+from temper.scorecard import build_scorecard
 from temper.summary import (
     render_calibration,
     render_comparison,
@@ -221,6 +222,31 @@ def compare(
     render_comparison(compared, out)
     if fail_on_regression and not compared.ship:
         raise typer.Exit(REGRESSED)
+
+
+@app.command()
+def scorecard(
+    folder: RunDir,
+    *,
+    baseline: Annotated[
+        Path | None, typer.Option("--baseline", help="A run to set this one against.")
+    ] = None,
+    out_file: Annotated[
+        Path | None,
+        typer.Option("--out", help="Where to write the page. Defaults to the run's own folder."),
+    ] = None,
+) -> None:
+    """Write a run's scorecard: one HTML file to read, share, or keep beside the run."""
+    with _plain_errors():
+        run = RunFolder.open(folder).run()
+        before = RunFolder.open(baseline).run() if baseline is not None else None
+        page = build_scorecard(run, before)
+    target = out_file or folder / "scorecard.html"
+    try:
+        target.write_text(page, encoding="utf-8")
+    except OSError as error:
+        _fail(f"can't write the scorecard to {str(target)!r}: {error.strerror}")
+    out.print(f"Wrote {target}", markup=False)
 
 
 @app.command()

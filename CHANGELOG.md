@@ -12,11 +12,11 @@ Decisions, not dashboards: every number comes with how sure it is, and two runs 
 - `temper compare BASELINE CANDIDATE`: each case set against its twin with Newcombe's interval on the change, the overall change against the noise, and a verdict. Hold when anything got worse beyond noise, overall or on a single case; ship otherwise, with the trials per case that would settle an undecided change. `--fail-on-regression` exits 1 on a hold, for CI.
 - `temper doctor [SUITE]`: Python, credentials (by source, never shown), each model the suite needs, the runs folder, and an offline run, without spending anything.
 - A run's manifest carries a fingerprint of its cases alone, so runs of one suite with different targets can be compared.
-- A single-file HTML scorecard.
+- `temper scorecard RUN [--baseline RUN] [--out FILE]`: one HTML file with the call, the tally, the noise floor, every case's likely range as a bar, and every trial's full answer and grades. Every text is escaped by a small builder, so a model's output can never become markup; the page loads nothing and runs nothing, under a content policy that forbids it; long answers are clipped; the same run makes the same page byte for byte. Light by default, dark when the reader prefers it, WCAG AA contrast in both.
 
 ### Changed
 
-- The statistics live in `temper.stats` and the comparison in `temper.comparison`, both closed form and standard library only.
+- The statistics live in `temper.stats` and the comparison in `temper.comparison`, both closed form and standard library only. The sentences the terminal and the scorecard share live in `temper.prose`.
 
 ## [0.3.1] · 10.22.2026
 

@@ -654,3 +654,30 @@ def test_doctor_probes_a_suites_own_models_and_fails_without_credentials(
     assert "✗ Credentials: none found; set ANTHROPIC_API_KEY" in result.output
     assert "✗ Model claude-haiku-5-5: no Anthropic credentials found" in result.output
     assert "claude-sonnet-5-5" not in result.output
+
+
+def test_scorecard_writes_one_page_beside_the_run_or_where_asked(files: Files) -> None:
+    baseline, candidate = two_runs(files, broken=True)
+
+    beside = runner.invoke(app, ["scorecard", str(candidate)])
+    elsewhere = files.root / "card.html"
+    compared = runner.invoke(
+        app, ["scorecard", str(candidate), "--baseline", str(baseline), "--out", str(elsewhere)]
+    )
+
+    assert beside.exit_code == 0, beside.output
+    assert f"Wrote {candidate / 'scorecard.html'}" in beside.output
+    assert (candidate / "scorecard.html").read_text(encoding="utf-8").startswith("<!doctype html>")
+    assert compared.exit_code == 0, compared.output
+    assert "Hold: 1 case got worse beyond noise: a." in elsewhere.read_text(encoding="utf-8")
+
+
+def test_scorecard_says_plainly_when_it_cannot_write(files: Files) -> None:
+    _, candidate = two_runs(files, broken=False)
+    blocked = files.root / "not-a-folder"
+    blocked.write_text("", encoding="utf-8")
+
+    result = runner.invoke(app, ["scorecard", str(candidate), "--out", str(blocked / "card.html")])
+
+    assert result.exit_code == 1
+    assert "can't write the scorecard to" in result.output

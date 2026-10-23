@@ -75,29 +75,43 @@ A check can also reach no verdict: the judge was down, or a `cost` check met a m
 
 Three trials of a case can't tell you much, and Temper says so. Every pass rate comes with the range the true rate is likely in, a 95% Wilson interval, which is wide at three trials and narrows as trials grow. A run also states its noise floor: the biggest difference two runs of the very same thing could show by chance at this size. A change smaller than that is noise, whatever it looks like.
 
-To decide whether a new prompt or model may ship, run the suite with each and compare the two runs:
+To decide whether a new prompt or model may ship, run the suite with each and compare the two runs. Here the candidate is the example with one thing changed: its return answer now says all sales are final.
 
 ```bash
-temper compare runs/20261022-091500-3f2a runs/20261023-101500-9f1a --fail-on-regression
+temper compare runs/20261023-030221-d1ec runs/20261023-030221-af4f --fail-on-regression
 ```
 
 ```text
 dunder-mifflin-support · 5 cases
-baseline  20261022-091500-3f2a · claude claude-sonnet-5-5 · 5 cases × 3 trials
-candidate 20261023-101500-9f1a · claude claude-sonnet-5-5 · 5 cases × 3 trials
+baseline  20261023-030221-d1ec · fake · 5 cases × 3 trials
+candidate 20261023-030221-af4f · fake dwights-tidy-up · 5 cases × 3 trials
 
 Case                  Baseline   Candidate   Change
-order-status          3/3        3/3         +0 points
-unopened-return       3/3        0/3         -100 points, worse beyond noise
-wet-paper-complaint   2/3        3/3         +33 points
+order-status               3/3         3/3   +0 points
+paper-weight               3/3         3/3   +0 points
+unopened-return            3/3         0/3   -100 points, worse beyond noise
+discount-injection         3/3         3/3   +0 points
+wet-paper-complaint        2/3         3/3   +33 points
 
-Overall 87% → 67%, -20 points (likely -45 to +8). Differences under 30 points are within noise at this size.
+Overall 93% → 80%, -13 points (likely -39 to +13 points). Differences under 24 points are within noise at this size.
 Hold: 1 case got worse beyond noise: unopened-return.
 ```
 
 Each case is set against its twin, so a case that broke shows as a regression even when the average hides it: three of three to none of three is beyond noise at three trials, while three of three to two of three is not. The call is to hold when anything got worse beyond noise, overall or on one case, and to ship otherwise. When the overall change is undecided at this size, the report says how many trials per case would settle it. With `--fail-on-regression` the command exits 1 on a hold, which is the CI gate. Two runs are comparable when their cases are the same; the target may differ, and that's the point.
 
 `temper doctor` checks the wiring without spending anything: Python, credentials (named by source, never shown), each model the suite needs, the runs folder, and an offline run.
+
+## The scorecard
+
+`temper scorecard` writes a run as one HTML file, beside the run unless told otherwise, to read in any browser, share, or keep:
+
+```bash
+temper scorecard runs/20261023-030221-af4f --baseline runs/20261023-030221-d1ec
+```
+
+It leads with the call when there's a baseline, then the tally, the noise floor, and a table of every case with its likely range drawn as a bar. Below that, every case opens up to show the question and each trial's full answer with every grade. It says exactly what the terminal says, because both read their sentences from one place.
+
+The page is built so that a model's answer can never become part of it. Every piece of text goes through a small HTML builder that escapes it on the way in, so an answer containing `<script>` is shown as text. A property test checks that against 150 random answers, suite names, and model names every time the tests run. The page loads nothing and runs nothing: no scripts, no fonts, no network, and a content policy that forbids them even if something slipped through. Long answers are clipped and say how much more is in `results.jsonl`. The same run always makes the same page, byte for byte. It's light by default, follows the reader's dark mode, meets WCAG AA contrast in both, and never uses color alone to say what happened.
 
 ## A suite, start to finish
 
@@ -260,7 +274,7 @@ If you have five minutes, start here:
 
 1. [`runner.py`](src/temper/runner.py) runs every case and trial side by side under a concurrency limit, with `asyncio.TaskGroup`, and sends answers and verdicts through one pipe that owns the retries, the time limit, the budget, and the check that the right model answered, after looking in the run's own recording so nothing is bought twice.
 2. [`judge.py`](src/temper/judge.py) turns a judge check into a request: the question with the property last, the verdict's JSON shape with the reason first, and the grade read back from what came.
-3. [`stats.py`](src/temper/stats.py) is forty lines of closed-form statistics: Wilson intervals, Newcombe's interval on a difference, the noise floor, and how many trials would settle a change. Its property tests say what the numbers must always do.
+3. [`stats.py`](src/temper/stats.py) is a short module of closed-form statistics: Wilson intervals, Newcombe's interval on a difference, the noise floor, and how many trials would settle a change. Its property tests say what the numbers must always do.
 4. [`results.py`](src/temper/results.py) is the run folder: answers and failures are written the moment they land, read back in suite order, and a run can be picked up where it stopped.
 5. [`calibration.py`](src/temper/calibration.py) sets the judge against your labels, with Cohen's kappa for the agreement chance would give anyway.
 6. [`loading.py`](src/temper/loading.py) parses the YAML once into both data and a map of where everything starts, so every problem, Pydantic's or Temper's own, can point at its line.

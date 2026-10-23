@@ -104,8 +104,9 @@ class Difference:
             return (-1.0, 1.0)
         low_before, high_before = self.baseline.interval
         low_after, high_after = self.candidate.interval
-        lower = after - before - math.hypot(before - low_before, high_after - after)
-        upper = after - before + math.hypot(high_before - before, after - low_after)
+        # The change is low when the candidate is at its lowest and the baseline at its highest.
+        lower = after - before - math.hypot(after - low_after, high_before - before)
+        upper = after - before + math.hypot(high_after - after, before - low_before)
         return (max(-1.0, lower), min(1.0, upper))
 
     @property

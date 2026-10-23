@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import textwrap
 from typing import TYPE_CHECKING
 
 from rich.table import Table
 from rich.text import Text
 
+from temper import prose
 from temper.calibration import FLOOR, KAPPA, TRUSTED
 from temper.planning import charged_models
 from temper.pricing import price_of
-from temper.wording import change_span, dollars, gap, percent, plural, points, span
+from temper.wording import dollars, plural, span
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -22,50 +22,37 @@ if TYPE_CHECKING:
     from temper.comparison import Comparison
     from temper.doctor import Finding
     from temper.planning import Plan
-    from temper.results import Manifest, Run, RunOptions, TrialFailure, TrialResult
-    from temper.stats import Difference, Direction, Rate
+    from temper.results import Run, RunOptions
+    from temper.stats import Direction, Rate
     from temper.suite import Suite
 
 
 def render_run(run: Run, console: Console) -> None:
     """Print one line per case with its likely rate, then the totals, the noise, and the cost."""
     manifest = run.manifest
-    console.print(Text.assemble((manifest.suite, "bold"), f" · {_described(manifest)}"), end="\n\n")
+    console.print(
+        Text.assemble((manifest.suite, "bold"), f" · {prose.described(manifest)}"), end="\n\n"
+    )
 
-    failures = _by_case(run.failures)
+    failures = prose.failures_by_case(run.failures)
     rates = run.rates
     table = _table("Case", ("Passed", "right"), "Likely rate", "Notes")
     for case_id, results in run.by_case().items():
         rate = rates[case_id]
         table.add_row(
             Text(case_id),
-            Text(f"{rate.passed}/{rate.scored}", style=_tone(rate.passed, rate.scored)),
+            _count(rate),
             Text(span(rate.interval) if rate.scored else "", style="dim"),
-            Text(_notes(rate, results, failures.get(case_id, [])), style="dim"),
+            Text(prose.notes(rate, results, failures.get(case_id, [])), style="dim"),
         )
     console.print(table)
     console.print()
 
-    rate = run.rate
-    likely = (
-        f" ({percent(rate.value)}, likely {span(rate.interval)})" if rate.value is not None else ""
-    )
-    extras = [
-        f"{run.count('truncated')} truncated" if run.count("truncated") else "",
-        f"{run.count('refused')} refused" if run.count("refused") else "",
-        f"{run.without_verdict} with no verdict" if run.without_verdict else "",
-        f"{plural(len(run.failures), 'attempt')} failed, not scored" if run.failures else "",
-    ]
-    console.print(
-        Text.assemble(
-            (f"{rate.passed} of {plural(rate.scored, 'scored trial')} passed{likely}", "bold"),
-            _joined(extras),
-        )
-    )
-    if rate.scored:
-        flaky = f" {plural(len(run.flaky), 'flaky case')}: passed some trials, failed others."
-        console.print(Text(_noise(rate) + (flaky if run.flaky else ""), style="dim"))
-    if (cost := _cost_line(run)) is not None:
+    console.print(Text.assemble((prose.tally(run), "bold"), _joined(prose.left_out(run))))
+    if run.rate.scored:
+        flaky = prose.flaky(run)
+        console.print(Text(" ".join(filter(None, (prose.noise(run.rate), flaky))), style="dim"))
+    if (cost := prose.cost(run)) is not None:
         console.print(Text(cost, style="dim"))
 
 
@@ -77,7 +64,8 @@ def render_comparison(compared: Comparison, console: Console) -> None:
         )
     )
     for role, manifest in (("baseline", compared.baseline), ("candidate", compared.candidate)):
-        console.print(Text(f"{role:<10}{manifest.run_id} · {_described(manifest)}", style="dim"))
+        line = f"{role:<10}{manifest.run_id} · {prose.described(manifest)}"
+        console.print(Text(line, style="dim"))
     console.print()
 
     table = _table("Case", ("Baseline", "right"), ("Candidate", "right"), "Change")
@@ -87,23 +75,17 @@ def render_comparison(compared: Comparison, console: Console) -> None:
             Text(change.case_id),
             _count(difference.baseline),
             _count(difference.candidate),
-            Text(_changed(difference), style=_shade(difference.direction)),
+            Text(prose.changed(difference), style=_shade(difference.direction)),
         )
     console.print(table)
     console.print()
 
-    overall = compared.overall
-    before, after, value = overall.baseline.value, overall.candidate.value, overall.value
-    if before is None or after is None or value is None:
+    overall = prose.overall(compared)
+    if overall is None:
         console.print(Text("Nothing to compare: a run has no scored trials.", "bold"))
         return
-    console.print(
-        Text.assemble(
-            (f"Overall {percent(before)} → {percent(after)}, {points(value)}", "bold"),
-            f" (likely {change_span(overall.interval)}). {_noise(overall.baseline)}",
-        )
-    )
-    console.print(Text(_call(compared), style="green" if compared.ship else "red"))
+    console.print(Text.assemble((overall, "bold"), f" {prose.noise(compared.overall.baseline)}"))
+    console.print(Text(prose.verdict(compared), style="green" if compared.ship else "red"))
 
 
 def render_findings(findings: Sequence[Finding], console: Console) -> None:
@@ -113,54 +95,12 @@ def render_findings(findings: Sequence[Finding], console: Console) -> None:
         console.print(Text.assemble((f"{mark} {finding.name}: ", style), finding.note))
 
 
-def _described(manifest: Manifest) -> str:
-    """`claude claude-sonnet-5-5 · judge claude-opus-5-5 · 5 cases × 3 trials`."""
-    model = f" {manifest.model}" if manifest.model else ""
-    judged = f" · judge {manifest.judge}" if manifest.judge else ""
-    cases = plural(len(manifest.case_ids), "case")
-    return f"{manifest.provider}{model}{judged} · {cases} × {plural(manifest.trials, 'trial')}"
-
-
-def _noise(rate: Rate) -> str:
-    return f"Differences under {gap(rate.noise_floor)} are within noise at this size."
-
-
 def _count(rate: Rate) -> Text:
     return Text(f"{rate.passed}/{rate.scored}", style=_tone(rate.passed, rate.scored))
 
 
-def _changed(difference: Difference) -> str:
-    if difference.value is None:
-        return "nothing scored"
-    beyond = f", {difference.direction} beyond noise" if difference.direction else ""
-    return f"{points(difference.value)}{beyond}"
-
-
 def _shade(direction: Direction | None) -> str:
     return {"better": "green", "worse": "red", None: "dim"}[direction]
-
-
-def _call(compared: Comparison) -> str:
-    """The verdict in a sentence: hold for anything worse beyond noise, ship otherwise."""
-    if compared.finding == "worse":
-        named = ", ".join(change.case_id for change in compared.regressed)
-        where = f"{plural(len(compared.regressed), 'case')} got worse beyond noise: {named}"
-        return f"Hold: {where}." if compared.regressed else "Hold: worse overall beyond noise."
-    better = (
-        f" {plural(len(compared.improved), 'case')} got better beyond noise."
-        if compared.improved
-        else ""
-    )
-    if compared.finding == "better":
-        return f"Ship: better overall beyond noise.{better}"
-    value, trials = compared.overall.value, compared.trials_to_tell
-    settle = ""
-    if value and trials is not None:
-        settle = (
-            f" The overall change is within noise at this size; {plural(trials, 'trial')} per case "
-            f"would tell {gap(value)} from noise."
-        )
-    return f"Ship: nothing got worse beyond noise.{better}{settle}"
 
 
 def render_estimate(plan: Plan, options: RunOptions, console: Console) -> None:
@@ -292,31 +232,11 @@ def _table(*columns: str | tuple[str, JustifyMethod]) -> Table:
     return table
 
 
-def _cost_line(run: Run) -> str | None:
-    """What the run cost at list price, the judge's share, and what was really spent if less."""
-    total = run.cost_usd
-    if total is None:
-        return None
-    judge = f", {dollars(run.verdicts_usd)} of it on the judge" if run.verdicts_usd else ""
-    spent = (run.manifest.spent_usd or 0.0) if run.manifest.charges else 0.0
-    if dollars(spent) == dollars(total):
-        return f"{dollars(total)} spent{judge}"
-    paid = f"{dollars(spent)} spent" if spent else "nothing spent"
-    return f"{dollars(total)} at list price{judge} · {paid}"
-
-
 def _joined(extras: Sequence[str]) -> str:
     return "".join(f" · {extra}" for extra in extras if extra)
 
 
 _CALL = {True: "pass", False: "fail"}
-
-
-def _by_case(failures: Sequence[TrialFailure]) -> dict[str, list[TrialFailure]]:
-    grouped: dict[str, list[TrialFailure]] = {}
-    for failure in failures:
-        grouped.setdefault(failure.case_id, []).append(failure)
-    return grouped
 
 
 def _tone(passed: int, scored: int) -> str:
@@ -325,29 +245,3 @@ def _tone(passed: int, scored: int) -> str:
     if passed == scored:
         return "green"
     return "red" if passed == 0 else "yellow"
-
-
-def _notes(rate: Rate, results: Sequence[TrialResult], failures: Sequence[TrialFailure]) -> str:
-    """What a reader should know about a case beyond its pass count, briefly."""
-    notes: list[str] = ["flaky"] if rate.flaky else []
-    first_miss = next(
-        (
-            f"trial {result.trial}: {textwrap.shorten(grade.reason, 72, placeholder='…')}"
-            for result in results
-            if result.status == "complete"
-            for grade in result.grades
-            if not grade.passed
-        ),
-        None,
-    )
-    if first_miss:
-        notes.append(first_miss)
-    notes.extend(
-        f"{number} {status}"
-        for status in ("truncated", "refused")
-        if (number := sum(result.status == status for result in results))
-    )
-    if failures:
-        kinds = ", ".join(sorted({failure.kind for failure in failures}))
-        notes.append(f"{plural(len(failures), 'attempt')} failed: {kinds}")
-    return " · ".join(notes)

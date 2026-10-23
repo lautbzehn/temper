@@ -30,6 +30,14 @@ def test_wilson_matches_the_textbook(passed: int, scored: int, lower: float, upp
     assert wilson(passed, scored) == pytest.approx((lower, upper), abs=0.005)
 
 
+def test_newcombes_interval_matches_his_own_worked_example() -> None:
+    # Newcombe (1998), Statistics in Medicine 17:873, example (a), method 10.
+    change = Difference(baseline=Rate(48, 80), candidate=Rate(56, 70))
+
+    assert change.value == pytest.approx(0.2)
+    assert change.interval == pytest.approx((0.0524, 0.3339), abs=0.0001)
+
+
 def test_three_of_three_is_a_rough_measurement() -> None:
     rate = Rate(3, 3)
 
@@ -118,6 +126,13 @@ def test_a_difference_holds_its_value_and_is_the_rates_difference_reversed(
         assert lower <= forward.value <= upper
         assert backward.value == pytest.approx(-forward.value)
     assert backward.interval == pytest.approx((-upper, -lower))
+
+
+@given(rates(at_least=1), rates(at_least=1))
+def test_a_measured_change_is_never_known_exactly(baseline: Rate, candidate: Rate) -> None:
+    lower, upper = Difference(baseline, candidate).interval
+
+    assert lower < upper
 
 
 @given(rates(at_least=1))
