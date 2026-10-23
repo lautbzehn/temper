@@ -3,10 +3,14 @@ name: Demo site
 # The Dunder Mifflin story's scorecard, built by `temper demo` from the recording
 # that ships with the package, and served by GitHub Pages at the custom domain
 # set in the repository's Pages settings.
+#
+# It rebuilds on every push to main, so the site always matches the code. A
+# release can't do it: a release builds from its tag, and the github-pages
+# environment only lets main deploy.
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -19,7 +23,6 @@ concurrency:
 jobs:
   build:
     name: Build the story's scorecard
-    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

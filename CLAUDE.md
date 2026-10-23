@@ -84,4 +84,4 @@ uv run mypy
 | `src/temper/files.py`, `jsonl.py`, `wording.py` | Reading files as UTF-8, records one per line, and the plurals and dollars people read |
 | `docs/adr/` | Decision notes: the context, the decision, and what it costs |
 | `docs/quickstart_*`, `docs/architecture_*` | Five steps to a first call, and how the pieces fit |
-| `.github/workflows/` | CI on every change; on a published release, PyPI through trusted publishing and the demo site on Pages |
+| `.github/workflows/` | CI on every change; the demo site on Pages on every push to main; PyPI through trusted publishing on a published full release |
