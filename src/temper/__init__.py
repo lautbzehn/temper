@@ -10,6 +10,7 @@ Typical use from Python::
 from importlib.metadata import version
 
 from temper.calibration import Calibration, calibrate
+from temper.comparison import Comparison, compare
 from temper.errors import (
     PluginError,
     ProviderError,
@@ -25,6 +26,8 @@ from temper.planning import Plan, Providers, estimate_suite, plan_run, providers
 from temper.providers import build_judge, build_provider
 from temper.results import Run, RunFolder, RunOptions, TrialFailure, TrialResult
 from temper.runner import complete_run, reopen_run, resume_run, run_suite, start_run
+from temper.scorecard import build_scorecard
+from temper.stats import Difference, Rate
 from temper.suite import Suite
 
 __version__ = version("temper-evals")
@@ -32,6 +35,8 @@ __version__ = version("temper-evals")
 __all__ = [
     "Answer",
     "Calibration",
+    "Comparison",
+    "Difference",
     "Grade",
     "Grader",
     "Label",
@@ -39,6 +44,7 @@ __all__ = [
     "PluginError",
     "ProviderError",
     "Providers",
+    "Rate",
     "Run",
     "RunError",
     "RunFolder",
@@ -52,7 +58,9 @@ __all__ = [
     "__version__",
     "build_judge",
     "build_provider",
+    "build_scorecard",
     "calibrate",
+    "compare",
     "complete_run",
     "estimate_suite",
     "load_suite",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import re
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING
@@ -7,11 +8,15 @@ from typing import TYPE_CHECKING
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from rich.console import Console
 
+from temper.comparison import compare
 from temper.errors import ProviderError, RunError
 from temper.pricing import cost_usd
 from temper.providers import Usage
 from temper.scorecard import CLIP, build_scorecard
+from temper.suite import Message
+from temper.summary import render_comparison
 from temper.wording import dollars
 from tests.support import Scripted, answer, case, judged, make_suite, run, verdict
 
@@ -73,7 +78,7 @@ def test_a_run_page_says_what_the_terminal_says(tmp_path: Path) -> None:
     assert "2 of 2 scored trials passed (100%, likely 34 to 100%)" in page.text
     assert "1 with no verdict" in page.text
     assert "1 attempt failed, not scored" in page.text
-    assert "Differences under 66 points are within noise at this size." in page.text
+    assert "Differences under 91 points are within noise at this size." in page.text
     assert "Sorry about that!" in page.text
     assert 'passed · judge "apologizes" · It apologizes.' in page.text
     assert 'no verdict · judge "apologizes" · no verdict: judge down' in page.text
@@ -128,10 +133,38 @@ def test_the_page_loads_nothing_and_says_how_to_read_it(tmp_path: Path) -> None:
     assert page.named("caption")
 
 
-def test_the_same_run_always_makes_the_same_page(tmp_path: Path) -> None:
-    finished = judged_run(tmp_path)
+def test_the_page_and_the_terminal_read_a_comparison_against_the_same_noise(
+    tmp_path: Path,
+) -> None:
+    baseline = judged_run(tmp_path / "a")
+    candidate = judged_run(tmp_path / "b", model="fake-2")
+    rejudged = candidate.model_copy(
+        update={"manifest": candidate.manifest.model_copy(update={"judge": "claude-opus-5-5"})}
+    )
+    compared = compare(baseline, rejudged)
+    buffer = io.StringIO()
+    render_comparison(compared, Console(file=buffer, width=200))
 
-    assert build_scorecard(finished) == build_scorecard(finished)
+    page = Page(build_scorecard(rejudged, baseline))
+
+    printed = buffer.getvalue()
+    [noise] = re.findall(r"(No difference, however large,[^\n]*|Differences under [^\n]*)", printed)
+    [caveat] = re.findall(r"(The runs were judged by different models[^\n]*)", printed)
+    assert noise in page.text
+    assert caveat in page.text
+    assert [p for p in page.named("p") if p.get("class") == "caveat"]
+
+
+def test_a_candidate_with_nothing_scored_gets_a_banner_that_makes_no_call(tmp_path: Path) -> None:
+    baseline = judged_run(tmp_path)
+    unscored = baseline.model_copy(update={"results": ()})
+
+    page = Page(build_scorecard(unscored, baseline))
+
+    [banner] = [p for p in page.named("p") if "verdict" in (p.get("class") or "")]
+    assert banner["class"] == "verdict unmeasured"
+    assert "Can't say: 2 cases with nothing scored: a (candidate), b (candidate)." in page.text
+    assert "Overall" not in page.text
 
 
 def test_a_long_answer_is_clipped_and_says_where_the_rest_is(tmp_path: Path) -> None:
@@ -151,20 +184,37 @@ text_from_a_model = st.text(st.characters(codec="utf-8"), min_size=1)
 def test_nothing_from_a_run_ever_becomes_markup(
     template: Run, reply: str, name: str, model: str
 ) -> None:
-    base = template
     results = tuple(
         result.model_copy(
-            update={"completion": result.completion.model_copy(update={"text": reply})}
+            update={
+                "completion": result.completion.model_copy(update={"text": reply}),
+                "grades": tuple(
+                    grade.model_copy(update={"check": reply, "reason": reply})
+                    for grade in result.grades
+                ),
+                "request": result.request.model_copy(
+                    update={"messages": (Message(role="user", content=reply),)}
+                ),
+            }
         )
-        for result in base.results
+        for result in template.results
     )
-    manifest = base.manifest.model_copy(update={"suite": name, "model": model})
-    rewritten = base.model_copy(update={"results": results, "manifest": manifest})
+    failures = tuple(failure.model_copy(update={"reason": reply}) for failure in template.failures)
+    manifest = template.manifest.model_copy(update={"suite": name, "model": model, "run_id": reply})
+    rewritten = template.model_copy(
+        update={"results": results, "failures": failures, "manifest": manifest}
+    )
 
     page = Page(build_scorecard(rewritten))
 
     assert {tag for tag, _ in page.tags} <= ALLOWED
-    assert not any(name.startswith("on") for _, attributes in page.tags for name in attributes)
+    for _, attributes in page.tags:
+        assert not any(attribute.startswith("on") for attribute in attributes)
+        assert (attributes.get("href") or "#case-").startswith("#case-")
+        assert (attributes.get("id") or "case-").startswith("case-")
+        assert re.fullmatch(
+            r"(left|width):[\d.]+%(;(left|width):[\d.]+%)?", attributes.get("style") or "left:0%"
+        )
     assert reply[:CLIP] in page.text
     assert name in page.text
     assert model in page.text
@@ -188,9 +238,6 @@ def test_a_page_with_nothing_scored_says_so_instead_of_drawing_bars(tmp_path: Pa
     unscored = baseline.model_copy(update={"results": ()})
 
     alone = Page(build_scorecard(unscored))
-    compared = Page(build_scorecard(unscored, baseline))
 
     assert "nothing scored" in alone.text
     assert "within noise" not in alone.text
-    assert "nothing scored" in compared.text
-    assert "Overall" not in compared.text

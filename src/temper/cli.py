@@ -23,9 +23,9 @@ from temper.runner import complete_run, reopen_run, start_run
 from temper.scorecard import build_scorecard
 from temper.summary import (
     render_calibration,
+    render_checkup,
     render_comparison,
     render_estimate,
-    render_findings,
     render_run,
 )
 from temper.wording import plural
@@ -51,7 +51,7 @@ RunDir = Annotated[Path, typer.Argument(help="A kept run's folder.", show_defaul
 
 INTERRUPTED = 130
 INCOMPLETE = 2
-REGRESSED = 1
+HELD = 3
 UNWELL = 1
 
 
@@ -210,7 +210,8 @@ def compare(
     fail_on_regression: Annotated[
         bool,
         typer.Option(
-            "--fail-on-regression", help="Exit 1 when the candidate is worse beyond noise, for CI."
+            "--fail-on-regression",
+            help="Exit 3 when the candidate can't ship: worse beyond noise, or unmeasured. For CI.",
         ),
     ] = False,
 ) -> None:
@@ -221,7 +222,7 @@ def compare(
         )
     render_comparison(compared, out)
     if fail_on_regression and not compared.ship:
-        raise typer.Exit(REGRESSED)
+        raise typer.Exit(HELD)
 
 
 @app.command()
@@ -268,9 +269,9 @@ def doctor(
     if suite is not None:
         with _plain_errors():
             loaded = load_suite(suite)
-    findings = asyncio.run(examine(loaded, out_dir))
-    render_findings(findings, out)
-    if not all(finding.ok for finding in findings):
+    diagnoses = asyncio.run(examine(loaded, out_dir))
+    render_checkup(diagnoses, out)
+    if not all(diagnosis.ok for diagnosis in diagnoses):
         raise typer.Exit(UNWELL)
 
 

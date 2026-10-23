@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
     from temper.calibration import Calibration
     from temper.comparison import Comparison
-    from temper.doctor import Finding
+    from temper.doctor import Diagnosis
     from temper.planning import Plan
     from temper.results import Run, RunOptions
     from temper.stats import Direction, Rate
@@ -81,19 +81,23 @@ def render_comparison(compared: Comparison, console: Console) -> None:
     console.print(table)
     console.print()
 
+    for caveat in prose.caveats(compared):
+        console.print(Text(caveat, style="yellow"))
     overall = prose.overall(compared)
-    if overall is None:
-        console.print(Text("Nothing to compare: a run has no scored trials.", "bold"))
-        return
-    console.print(Text.assemble((overall, "bold"), f" {prose.noise(compared.overall.baseline)}"))
-    console.print(Text(prose.verdict(compared), style="green" if compared.ship else "red"))
+    if overall is not None:
+        console.print(Text.assemble((overall, "bold"), f" {prose.noise_for(compared)}"))
+    console.print(Text(prose.verdict(compared), style=_tone_of(compared)))
 
 
-def render_findings(findings: Sequence[Finding], console: Console) -> None:
-    """Print each check-up finding on a line, marked fine or not."""
-    for finding in findings:
-        mark, style = ("✓", "green") if finding.ok else ("✗", "red")
-        console.print(Text.assemble((f"{mark} {finding.name}: ", style), finding.note))
+def render_checkup(diagnoses: Sequence[Diagnosis], console: Console) -> None:
+    """Print each of the doctor's diagnoses on a line, marked fine or not."""
+    for diagnosis in diagnoses:
+        mark, style = ("✓", "green") if diagnosis.ok else ("✗", "red")
+        console.print(Text.assemble((f"{mark} {diagnosis.name}: ", style), diagnosis.note))
+
+
+def _tone_of(compared: Comparison) -> str:
+    return {"unmeasured": "yellow", "worse": "red"}.get(compared.finding, "green")
 
 
 def _count(rate: Rate) -> Text:

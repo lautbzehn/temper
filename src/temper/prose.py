@@ -14,7 +14,7 @@ from temper.wording import change_span, dollars, gap, percent, plural, points, s
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from temper.comparison import Comparison
+    from temper.comparison import Change, Comparison
     from temper.results import Manifest, Run, TrialFailure, TrialResult
     from temper.stats import Difference, Rate
 
@@ -56,7 +56,28 @@ def left_out(run: Run) -> list[str]:
 
 def noise(rate: Rate) -> str:
     """How big a difference has to be, at this size, before it means anything."""
-    return f"Differences under {gap(rate.noise_floor)} are within noise at this size."
+    floor = rate.noise_floor
+    if floor is None:
+        return "No difference, however large, could be told from noise at this size."
+    return f"Differences under {gap(floor)} are within noise at this size."
+
+
+def noise_for(compared: Comparison) -> str:
+    """The noise line a comparison is read against: the baseline's, at its size."""
+    return noise(compared.overall.baseline)
+
+
+def caveats(compared: Comparison) -> list[str]:
+    """What a reader must weigh before the numbers: for now, two runs judged by different models."""
+    if not compared.judges_differ:
+        return []
+    named = [manifest.judge or "no judge" for manifest in (compared.baseline, compared.candidate)]
+    return [
+        (
+            f"The runs were judged by different models, {named[0]} and {named[1]}, so a change "
+            "may be the judge's and not the target's."
+        )
+    ]
 
 
 def flaky(run: Run) -> str | None:
@@ -122,7 +143,7 @@ def changed(difference: Difference) -> str:
 
 
 def overall(compared: Comparison) -> str | None:
-    """`Overall 87% → 67%, -20 points (likely -45 to +8).`, or None with nothing scored."""
+    """`Overall 87% → 67%, -20 points (likely -45 to +8 points).`, or None with nothing scored."""
     change = compared.overall
     before, after, value = change.baseline.value, change.candidate.value, change.value
     if before is None or after is None or value is None:
@@ -134,7 +155,14 @@ def overall(compared: Comparison) -> str | None:
 
 
 def verdict(compared: Comparison) -> str:
-    """The call in a sentence: hold for anything worse beyond noise, ship otherwise."""
+    """The call in a sentence: none with a case unmeasured, hold for anything worse, else ship."""
+    if compared.finding == "unmeasured":
+        named = ", ".join(
+            f"{change.case_id} ({_unscored_in(change)})" for change in compared.unmeasured
+        )
+        return (
+            f"Can't say: {plural(len(compared.unmeasured), 'case')} with nothing scored: {named}."
+        )
     if compared.finding == "worse":
         named = ", ".join(change.case_id for change in compared.regressed)
         where = f"{plural(len(compared.regressed), 'case')} got worse beyond noise: {named}"
@@ -151,3 +179,16 @@ def verdict(compared: Comparison) -> str:
             f"would tell {gap(value)} from noise."
         )
     return f"Ship: nothing got worse beyond noise.{better}{settle}"
+
+
+def _unscored_in(change: Change) -> str:
+    """Which run scored nothing for the case: the baseline, the candidate, or both."""
+    sides = [
+        side
+        for side, rate in (
+            ("baseline", change.difference.baseline),
+            ("candidate", change.difference.candidate),
+        )
+        if rate.value is None
+    ]
+    return " and ".join(sides)

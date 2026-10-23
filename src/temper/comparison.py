@@ -2,8 +2,9 @@
 
 A change is only worth something against the noise two runs of one thing
 would show, so every change comes with its interval. The verdict holds a
-candidate only for a change that is worse beyond that noise, overall or on
-any one case: a case that broke is a regression even when the average hides it.
+candidate for a change that is worse beyond that noise, overall or on any
+one case, and refuses to call anything when a case has nothing scored. A
+case that broke is a regression even when the average hides it.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from temper.stats import Difference, trials_to_tell
 if TYPE_CHECKING:
     from temper.results import Manifest, Run
 
-Finding = Literal["better", "worse", "undecided"]
+Finding = Literal["better", "worse", "undecided", "unmeasured"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +32,12 @@ class Change:
 
 @dataclass(frozen=True, slots=True)
 class Comparison:
-    """A candidate run against a baseline: every case's change, the overall one, and the call."""
+    """A candidate run against a baseline: every case's change, the overall one, and the call.
+
+    Each case's change is judged among all the cases, so one false alarm
+    across the suite stays as unlikely as one alone; the overall change
+    stands on its own.
+    """
 
     baseline: Manifest
     candidate: Manifest
@@ -49,8 +55,15 @@ class Comparison:
         return tuple(change for change in self.changes if change.difference.direction == "better")
 
     @property
+    def unmeasured(self) -> tuple[Change, ...]:
+        """The cases with nothing scored in one run or both, where no change can be told at all."""
+        return tuple(change for change in self.changes if change.difference.value is None)
+
+    @property
     def finding(self) -> Finding:
-        """What the comparison found: worse anywhere beyond noise, better overall, or undecided."""
+        """What the comparison found, worst first: unmeasured, worse, better, or undecided."""
+        if self.unmeasured:
+            return "unmeasured"
         if self.regressed or self.overall.direction == "worse":
             return "worse"
         if self.overall.direction == "better":
@@ -59,16 +72,21 @@ class Comparison:
 
     @property
     def ship(self) -> bool:
-        """Whether the candidate may ship: nothing got worse beyond noise."""
-        return self.finding != "worse"
+        """Whether the candidate may ship: every case measured, and nothing worse beyond noise."""
+        return self.finding in {"better", "undecided"}
+
+    @property
+    def judges_differ(self) -> bool:
+        """Whether the runs were judged by different models, which a change may really be."""
+        return self.baseline.judge != self.candidate.judge
 
     @property
     def trials_to_tell(self) -> int | None:
         """Trials per case that would lift the overall change out of the noise, if any would."""
-        rate, change = self.overall.baseline.value, self.overall.value
-        if rate is None or change is None:
+        before, after = self.overall.baseline.value, self.overall.candidate.value
+        if before is None or after is None:
             return None
-        scored = trials_to_tell(rate, change)
+        scored = trials_to_tell(before, after)
         return None if scored is None else math.ceil(scored / len(self.changes))
 
 
@@ -89,9 +107,10 @@ def compare(baseline: Run, candidate: Run) -> Comparison:
             "cases; compare two runs of the same suite's cases"
         )
     before, after = baseline.rates, candidate.rates
+    case_ids = baseline.manifest.case_ids
     changes = tuple(
-        Change(case_id, Difference(before[case_id], after[case_id]))
-        for case_id in baseline.manifest.case_ids
+        Change(case_id, Difference(before[case_id], after[case_id], among=len(case_ids)))
+        for case_id in case_ids
     )
     return Comparison(
         baseline.manifest, candidate.manifest, changes, Difference(baseline.rate, candidate.rate)

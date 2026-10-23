@@ -178,7 +178,7 @@ def fingerprint(suite: Suite) -> str:
 
 def cases_fingerprint(suite: Suite) -> str:
     """A short hash of the cases alone, so two runs can be compared across a change of target."""
-    cases = "\n".join(case.model_dump_json() for case in suite.cases)
+    cases = "\n".join(case.model_dump_json(exclude={"tags"}) for case in suite.cases)
     return hashlib.sha256(cases.encode()).hexdigest()[:16]
 
 

@@ -9,9 +9,10 @@ Decisions, not dashboards: every number comes with how sure it is, and two runs 
 ### Added
 
 - Every pass rate has its 95% interval, a Wilson score interval, shown per case and for the run. A run states its noise floor, the biggest difference two runs of the same thing could show by chance at its size, and names its flaky cases, the ones whose trials disagreed.
-- `temper compare BASELINE CANDIDATE`: each case set against its twin with Newcombe's interval on the change, the overall change against the noise, and a verdict. Hold when anything got worse beyond noise, overall or on a single case; ship otherwise, with the trials per case that would settle an undecided change. `--fail-on-regression` exits 1 on a hold, for CI.
-- `temper doctor [SUITE]`: Python, credentials (by source, never shown), each model the suite needs, the runs folder, and an offline run, without spending anything.
-- A run's manifest carries a fingerprint of its cases alone, so runs of one suite with different targets can be compared.
+- `temper compare BASELINE CANDIDATE`: each case set against its twin with Newcombe's interval on the change, widened across the cases so one false alarm among them stays as unlikely as one alone; the overall change against the noise; and a verdict. Hold when anything got worse beyond noise, overall or on a single case; no call when a case has nothing scored in either run; ship otherwise, with the trials per case that would settle an undecided change. The report says when the two runs were judged by different models. `--fail-on-regression` exits 3 whenever the candidate can't ship, for CI.
+- `temper doctor [SUITE]`: Python, credentials (by source, never shown), each model the suite needs, whether runs could be kept where they go, and an offline run, without spending anything or making a folder.
+- A run's manifest carries a fingerprint of its cases alone, tags left out, so runs of one suite with different targets can be compared.
+- `compare`, `Comparison`, `Rate`, `Difference`, and `build_scorecard` are importable from `temper`.
 - `temper scorecard RUN [--baseline RUN] [--out FILE]`: one HTML file with the call, the tally, the noise floor, every case's likely range as a bar, and every trial's full answer and grades. Every text is escaped by a small builder, so a model's output can never become markup; the page loads nothing and runs nothing, under a content policy that forbids it; long answers are clipped; the same run makes the same page byte for byte. Light by default, dark when the reader prefers it, WCAG AA contrast in both.
 
 ### Changed

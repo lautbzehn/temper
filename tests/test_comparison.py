@@ -10,6 +10,7 @@ from rich.console import Console
 from temper.comparison import compare
 from temper.errors import RunError
 from temper.providers import FakeProvider
+from temper.runner import cases_fingerprint
 from temper.summary import render_comparison
 from tests.support import case, make_suite, run
 
@@ -170,10 +171,10 @@ def test_the_report_says_what_would_settle_an_undecided_change(tmp_path: Path) -
         "Ship: nothing got worse beyond noise. The overall change is within noise at this size;"
         in shown
     )
-    assert "11 trials per case would tell 8 points from noise." in shown
+    assert "14 trials per case would tell 8 points from noise." in shown
 
 
-def test_the_report_copes_with_nothing_scored(tmp_path: Path) -> None:
+def test_a_candidate_with_nothing_scored_gets_no_call(tmp_path: Path) -> None:
     suite = make_suite(case("a"), trials=1)
     baseline = run(suite, FakeProvider({"a": ["yes"]}), tmp_path / "a")
     unscored = baseline.model_copy(update={"results": ()})
@@ -182,9 +183,39 @@ def test_the_report_copes_with_nothing_scored(tmp_path: Path) -> None:
     compared = compare(baseline, unscored)
     render_comparison(compared, Console(file=buffer, width=200))
 
+    assert compared.finding == "unmeasured"
+    assert not compared.ship
     assert compared.trials_to_tell is None
     assert "nothing scored" in buffer.getvalue()
-    assert "Nothing to compare: a run has no scored trials." in buffer.getvalue()
+    assert "Overall" not in buffer.getvalue()
+    assert "Can't say: 1 case with nothing scored: a (candidate)." in buffer.getvalue()
+
+
+def test_runs_judged_by_different_models_say_so_first(tmp_path: Path) -> None:
+    baseline, candidate = before_and_after(tmp_path)
+    rejudged = candidate.model_copy(
+        update={"manifest": candidate.manifest.model_copy(update={"judge": "claude-opus-5-5"})}
+    )
+    buffer = io.StringIO()
+
+    compared = compare(baseline, rejudged)
+    render_comparison(compared, Console(file=buffer, width=200))
+
+    assert compared.judges_differ
+    assert not compare(baseline, candidate).judges_differ
+    assert (
+        "The runs were judged by different models, no judge and claude-opus-5-5, so a change "
+        "may be the judge's and not the target's."
+    ) in buffer.getvalue()
+
+
+def test_tags_do_not_change_which_cases_these_are() -> None:
+    plain = make_suite(case("a"))
+    tagged = make_suite({**case("a"), "tags": ["orders"]})
+    asked_differently = make_suite({**case("a"), "input": "Something else"})
+
+    assert cases_fingerprint(plain) == cases_fingerprint(tagged)
+    assert cases_fingerprint(plain) != cases_fingerprint(asked_differently)
 
 
 def many(out: Path, passes: int, *, model: str = "fake-1") -> Run:

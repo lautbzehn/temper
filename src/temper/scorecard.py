@@ -28,13 +28,13 @@ if TYPE_CHECKING:
 # Characters of one text shown on the page; the rest stays in results.jsonl.
 CLIP: Final = 4_000
 
-_POLICY: Final = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+_POLICY: Final = "default-src 'none'; style-src 'unsafe-inline'"
 
 _STYLE: Final = """
 :root {
   color-scheme: light dark;
   --ink: #1f2328; --dim: #57606a; --line: #d0d7de; --paper: #ffffff; --wash: #f6f8fa;
-  --better: #1a7f37; --worse: #b3261e; --track: #e6e9ed; --range: #8c959f;
+  --better: #1a7f37; --worse: #b3261e; --track: #e6e9ed; --range: #6e7681;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -62,6 +62,8 @@ a { color: inherit; text-underline-offset: 0.15em; }
 }
 .verdict.ship { border-color: var(--better); }
 .verdict.hold { border-color: var(--worse); }
+.verdict.unmeasured { border-color: var(--dim); }
+.caveat { color: var(--worse); }
 .tally { font-size: 1.15rem; font-weight: 600; margin-top: 1.5rem; }
 .table { overflow-x: auto; margin-top: 1.5rem; }
 table { border-collapse: collapse; width: 100%; }
@@ -141,17 +143,19 @@ def _header(manifest: Manifest) -> Markup:
 
 
 def _verdict(compared: Comparison) -> Markup:
-    return element(
-        "p", prose.verdict(compared), class_=f"verdict {'ship' if compared.ship else 'hold'}"
-    )
+    kind = {"unmeasured": "unmeasured", "worse": "hold"}.get(compared.finding, "ship")
+    return element("p", prose.verdict(compared), class_=f"verdict {kind}")
 
 
 def _summary(run: Run, compared: Comparison | None) -> Markup:
     lines: list[Markup | None] = [element("p", prose.tally(run), class_="tally")]
     lines.extend(element("p", said) for said in prose.left_out(run))
-    if compared is not None and (overall := prose.overall(compared)) is not None:
-        lines.append(element("p", overall))
-    if run.rate.scored:
+    if compared is not None:
+        lines.extend(element("p", caveat, class_="caveat") for caveat in prose.caveats(compared))
+        if (overall := prose.overall(compared)) is not None:
+            lines.append(element("p", overall))
+        lines.append(element("p", prose.noise_for(compared), class_="dim"))
+    elif run.rate.scored:
         lines.append(element("p", prose.noise(run.rate), class_="dim"))
     if (flaky := prose.flaky(run)) is not None:
         lines.append(element("p", flaky, class_="dim"))
@@ -193,8 +197,10 @@ def _comparison_table(compared: Comparison) -> Markup:
         )
         for change in compared.changes
     ]
+    cases = plural(len(compared.changes), "case")
     return _table(
-        "Each case set against its twin in the baseline run, with how sure the change is (95%).",
+        f"Each case set against its twin in the baseline run. Each change's interval is widened "
+        f"so that one false alarm among all {cases} is as unlikely as one alone (95%).",
         ("Case", "Baseline", "Candidate", "Change"),
         rows,
     )

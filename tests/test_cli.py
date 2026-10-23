@@ -598,7 +598,7 @@ def test_compare_holds_a_broken_candidate_and_can_fail_the_build(files: Files) -
 
     assert plain.exit_code == 0
     assert "Hold: 1 case got worse beyond noise: a." in plain.output
-    assert gated.exit_code == 1
+    assert gated.exit_code == 3
 
 
 def test_compare_ships_a_candidate_that_held_up(files: Files) -> None:
@@ -633,7 +633,9 @@ def test_doctor_checks_the_wiring_without_spending(
     assert result.exit_code == 0, result.output
     assert "✓ Credentials: an API key, never shown here" in result.output
     assert SECRET not in result.output
-    assert "✓ Model claude-sonnet-5-5: answers; a one-word question is 10 tokens" in result.output
+    assert "✓ Model claude-sonnet-5-5: known to the API; a one-word question is 10 tokens" in (
+        result.output
+    )
     assert "✓ Model claude-opus-5-5:" in result.output
     assert "✓ Runs folder:" in result.output
     assert "✓ Offline run: 1 of 1 passed" in result.output
@@ -681,3 +683,19 @@ def test_scorecard_says_plainly_when_it_cannot_write(files: Files) -> None:
 
     assert result.exit_code == 1
     assert "can't write the scorecard to" in result.output
+
+
+def test_doctor_asks_for_no_credentials_when_the_suite_needs_none(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(files.root))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(files.root))
+
+    result = runner.invoke(app, ["doctor", str(EXAMPLE), "--out", str(files.root / "runs")])
+
+    assert result.exit_code == 0, result.output
+    assert "✓ Credentials: not needed: the suite names no Claude model" in result.output
+    assert "Model" not in result.output
+    assert not (files.root / "runs").exists()

@@ -2,7 +2,7 @@
 
 **Test AI features the way you test code, and know when a difference is real.**
 
-Teams change prompts and models every week, and most can't say whether a change made things better, worse, or just different. Temper runs a suite of cases against an AI feature, several times each, grades every answer, and keeps an honest record of what happened: a failed call is never written down as a wrong answer, and every run says what it cost. Where code can't decide, a second model judges, and the judge is measured against your own labels before it is believed. Coming milestones add error bars and a plain-English verdict: ship it, or hold.
+Teams change prompts and models every week, and most can't say whether a change made things better, worse, or just different. Temper runs a suite of cases against an AI feature, several times each, grades every answer, and keeps an honest record of what happened: a failed call is never written down as a wrong answer, and every run says what it cost. Where code can't decide, a second model judges, and the judge is measured against your own labels before it is believed. Every number comes with how sure it is, and two runs end in a plain-English verdict: ship it, or hold.
 
 > **Status:** early and private. Milestone 3 of 6 is done: every pass rate has its error bar, two runs can be compared with a ship-or-hold verdict, and a build can fail on a regression. The roadmap is [below](#roadmap).
 
@@ -73,7 +73,7 @@ A check can also reach no verdict: the judge was down, or a `cost` check met a m
 
 ## Know when a difference is real
 
-Three trials of a case can't tell you much, and Temper says so. Every pass rate comes with the range the true rate is likely in, a 95% Wilson interval, which is wide at three trials and narrows as trials grow. A run also states its noise floor: the biggest difference two runs of the very same thing could show by chance at this size. A change smaller than that is noise, whatever it looks like.
+Three trials of a case can't tell you much, and Temper says so. Every pass rate comes with the range the true rate is likely in, a 95% Wilson interval, which is wide at three trials and narrows as trials grow. A run also states its noise floor: the smallest change from its rate that would count as beyond noise at this size. A change under the floor is never called real, whichever way it goes.
 
 To decide whether a new prompt or model may ship, run the suite with each and compare the two runs. Here the candidate is the example with one thing changed: its return answer now says all sales are final.
 
@@ -93,13 +93,13 @@ unopened-return            3/3         0/3   -100 points, worse beyond noise
 discount-injection         3/3         3/3   +0 points
 wet-paper-complaint        2/3         3/3   +33 points
 
-Overall 93% → 80%, -13 points (likely -39 to +13 points). Differences under 24 points are within noise at this size.
+Overall 93% → 80%, -13 points (likely -39 to +13 points). Differences under 30 points are within noise at this size.
 Hold: 1 case got worse beyond noise: unopened-return.
 ```
 
-Each case is set against its twin, so a case that broke shows as a regression even when the average hides it: three of three to none of three is beyond noise at three trials, while three of three to two of three is not. The call is to hold when anything got worse beyond noise, overall or on one case, and to ship otherwise. When the overall change is undecided at this size, the report says how many trials per case would settle it. With `--fail-on-regression` the command exits 1 on a hold, which is the CI gate. Two runs are comparable when their cases are the same; the target may differ, and that's the point.
+Each case is set against its twin, so a case that broke shows as a regression even when the average hides it. The per-case intervals are widened so that one false alarm among all the cases stays as unlikely as one alone, which is why five trials of a case can show a clean break while three can't. The call is to hold when anything got worse beyond noise, overall or on one case; to make no call when a case has nothing scored in either run, since a candidate that refused everything must not ship on the strength of an empty table; and to ship otherwise. When the overall change is undecided at this size, the report says how many trials per case would settle it. With `--fail-on-regression` the command exits 3 whenever the candidate can't ship, which is the CI gate. Two runs are comparable when their cases are the same; the target may differ, and that's the point, and if the judge differs the report says so.
 
-`temper doctor` checks the wiring without spending anything: Python, credentials (named by source, never shown), each model the suite needs, the runs folder, and an offline run.
+`temper doctor` checks the wiring without spending anything: Python, credentials (named by source, never shown), each model the suite needs, whether runs could be kept where they go, and an offline run through the real runner. A suite that names no Claude model needs no credentials, and the doctor says so instead of asking for them.
 
 ## The scorecard
 

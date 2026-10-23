@@ -3,10 +3,18 @@ from __future__ import annotations
 import math
 
 import pytest
-from hypothesis import given
+from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from temper.stats import Difference, Rate, noise_floor, trials_to_tell, wilson
+from temper.stats import (
+    Difference,
+    Rate,
+    change_interval,
+    direction_of,
+    noise_floor,
+    trials_to_tell,
+    wilson,
+)
 
 counts = st.integers(min_value=0, max_value=200)
 
@@ -43,7 +51,7 @@ def test_three_of_three_is_a_rough_measurement() -> None:
 
     assert rate.value == 1.0
     assert rate.interval[0] < 0.5
-    assert rate.noise_floor == pytest.approx(0.56, abs=0.005)
+    assert rate.noise_floor == pytest.approx(0.747, abs=0.005)
     assert not rate.flaky
 
 
@@ -52,7 +60,9 @@ def test_nothing_scored_means_anything_is_possible() -> None:
 
     assert nothing.value is None
     assert nothing.interval == (0.0, 1.0)
-    assert nothing.noise_floor == 1.0
+    assert nothing.noise_floor is None
+    assert Rate(1, 1).noise_floor is None
+    assert Rate(2, 2).noise_floor == pytest.approx(0.907, abs=0.005)
     assert Difference(nothing, Rate(3, 3)).value is None
     assert Difference(nothing, Rate(3, 3)).interval == (-1.0, 1.0)
     assert Difference(nothing, Rate(3, 3)).direction is None
@@ -74,14 +84,21 @@ def test_a_case_that_wobbled_does_not() -> None:
 
 
 def test_trials_to_tell_grows_as_the_change_shrinks() -> None:
-    big, small, tiny = (trials_to_tell(0.8, change) for change in (0.5, 0.1, 0.02))
+    big, small, tiny = (trials_to_tell(0.8, after) for after in (0.3, 0.7, 0.78))
 
     assert big is not None
     assert small is not None
     assert tiny is not None
     assert big < small < tiny
-    assert trials_to_tell(0.8, 0.0) is None
-    assert trials_to_tell(0.5, 0.0001) is None
+    assert trials_to_tell(0.8, 0.8) is None
+    assert trials_to_tell(0.5, 0.5001) is None
+
+
+def test_changes_judged_together_each_need_more_to_show() -> None:
+    assert Difference(Rate(3, 3), Rate(0, 3)).direction == "worse"
+    assert Difference(Rate(3, 3), Rate(0, 3), among=40).direction is None
+    assert Difference(Rate(5, 5), Rate(0, 5), among=40).direction == "worse"
+    assert Difference(Rate(5, 5), Rate(1, 5), among=40).direction is None
 
 
 @given(rates())
@@ -106,11 +123,15 @@ def test_an_interval_is_the_same_seen_from_either_side(rate: Rate) -> None:
 def test_more_trials_never_widen_an_interval_or_raise_the_floor(rate: float, scored: int) -> None:
     lower, upper = wilson(rate * scored, scored)
     lower_more, upper_more = wilson(rate * (scored + 1), scored + 1)
+    floor, floor_more = (
+        noise_floor(rate * scored, scored),
+        noise_floor(rate * (scored + 1), scored + 1),
+    )
 
     assert upper_more - lower_more <= upper - lower + 1e-12
-    assert (
-        noise_floor(rate * (scored + 1), scored + 1) <= noise_floor(rate * scored, scored) + 1e-12
-    )
+    if floor is not None:
+        assert floor_more is not None
+        assert floor_more <= floor + 1e-9
 
 
 @given(rates(), rates())
@@ -136,12 +157,40 @@ def test_a_measured_change_is_never_known_exactly(baseline: Rate, candidate: Rat
 
 
 @given(rates(at_least=1))
-def test_a_rate_against_itself_is_within_noise_by_exactly_the_floor(rate: Rate) -> None:
-    same = Difference(rate, rate)
+def test_the_floor_is_the_least_change_that_shows(rate: Rate) -> None:
+    floor = rate.noise_floor
+    assume(floor is not None)
+    assert floor is not None
+    value = rate.value
+    assert value is not None
 
-    assert same.value == 0
-    assert same.direction is None
-    assert same.interval == pytest.approx((-rate.noise_floor, rate.noise_floor))
+    def shows(change: float) -> bool:
+        moved = ((value + change) * rate.scored, rate.scored)
+        return direction_of(change_interval((rate.passed, rate.scored), moved)) is not None
+
+    reachable = [sign for sign in (1, -1) if 0 <= value + sign * floor <= 1]
+    assert any(shows(sign * floor) for sign in reachable)
+    assert not any(shows(sign * (floor - 1e-9)) for sign in reachable)
+
+
+@given(
+    before=st.floats(min_value=0, max_value=1),
+    after=st.floats(min_value=0, max_value=1),
+)
+def test_at_the_trials_to_tell_the_change_shows_and_just_under_it_does_not(
+    before: float, after: float
+) -> None:
+    assume(abs(before - after) >= 0.05)
+    scored = trials_to_tell(before, after)
+    assume(scored is not None)
+    assert scored is not None
+
+    def shows(trials: int) -> bool:
+        interval = change_interval((before * trials, trials), (after * trials, trials))
+        return direction_of(interval) is not None
+
+    assert shows(scored)
+    assert scored == 1 or not shows(scored - 1)
 
 
 @given(rates(at_least=1), rates(at_least=1))

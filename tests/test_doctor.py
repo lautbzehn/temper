@@ -19,9 +19,9 @@ def test_the_checks_come_in_the_order_a_person_would_fix_them(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     monkeypatch.setattr("temper.providers.claude.AsyncAnthropic", mock_client)
 
-    findings = asyncio.run(examine(None, tmp_path / "runs"))
+    diagnoses = asyncio.run(examine(None, tmp_path / "runs"))
 
-    assert [finding.name for finding in findings] == [
+    assert [diagnosis.name for diagnosis in diagnoses] == [
         "Python",
         "Temper",
         "Credentials",
@@ -30,7 +30,9 @@ def test_the_checks_come_in_the_order_a_person_would_fix_them(
         "Runs folder",
         "Offline run",
     ]
-    assert all(finding.ok for finding in findings)
+    assert all(diagnosis.ok for diagnosis in diagnoses)
+    assert (tmp_path / "runs").exists() is False
+    assert "would be made" in diagnoses[-2].note
 
 
 def test_a_suite_names_the_models_to_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -38,9 +40,9 @@ def test_a_suite_names_the_models_to_probe(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr("temper.providers.claude.AsyncAnthropic", mock_client)
     suite = make_suite(judged("a"), judge={"model": "claude-opus-5-5"})
 
-    findings = asyncio.run(examine(suite, tmp_path))
+    diagnoses = asyncio.run(examine(suite, tmp_path))
 
-    assert [finding.name for finding in findings if finding.name.startswith("Model")] == [
+    assert [diagnosis.name for diagnosis in diagnoses if diagnosis.name.startswith("Model")] == [
         "Model claude-opus-5-5"
     ]
 
@@ -54,13 +56,13 @@ def test_an_old_python_and_a_folder_that_cannot_be_written_are_found(
     blocked = tmp_path / "file"
     blocked.write_text("not a folder", encoding="utf-8")
 
-    findings = {finding.name: finding for finding in asyncio.run(examine(None, blocked))}
+    diagnoses = {diagnosis.name: diagnosis for diagnosis in asyncio.run(examine(None, blocked))}
 
-    assert not findings["Python"].ok
-    assert findings["Python"].note == "3.9.1; Temper needs 3.11 or newer"
-    assert not findings["Runs folder"].ok
-    assert "can't write in" in findings["Runs folder"].note
-    assert findings["Offline run"].ok
+    assert not diagnoses["Python"].ok
+    assert diagnoses["Python"].note == "3.9.1; Temper needs 3.11 or newer"
+    assert not diagnoses["Runs folder"].ok
+    assert "can't write in" in diagnoses["Runs folder"].note
+    assert diagnoses["Offline run"].ok
 
 
 def test_a_scripted_run_that_does_not_finish_is_reported(
@@ -74,9 +76,9 @@ def test_a_scripted_run_that_does_not_finish_is_reported(
 
     monkeypatch.setattr("temper.doctor.run_suite", broken)
 
-    findings = {finding.name: finding for finding in asyncio.run(examine(None, tmp_path))}
+    diagnoses = {diagnosis.name: diagnosis for diagnosis in asyncio.run(examine(None, tmp_path))}
 
-    assert not findings["Offline run"].ok
-    assert findings["Offline run"].note == (
+    assert not diagnoses["Offline run"].ok
+    assert diagnoses["Offline run"].note == (
         "a scripted run didn't finish: the script is missing a reply"
     )
