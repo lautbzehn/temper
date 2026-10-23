@@ -26,15 +26,8 @@ from temper import judge
 from temper.checks import build_check
 from temper.errors import ProviderError, RunError, TransientError
 from temper.graders import Answer, Grader
-from temper.loading import load_suite
-from temper.planning import (
-    Plan,
-    Providers,
-    answer_request,
-    plan_run,
-    prepare_suite,
-    providers_for,
-)
+from temper.loading import load_suite, swap_system_prompt
+from temper.planning import Plan, Providers, answer_request, plan_run, providers_for
 from temper.pricing import PRICED_ON, cost_usd
 from temper.providers import served_matches
 from temper.results import Manifest, Retry, RunFolder, RunOptions, TrialFailure, TrialResult
@@ -69,14 +62,11 @@ async def run_suite(
     that didn't are in `run.failures`, and `resume_run` can try them again.
 
     Raises:
-        RunError: the system prompt `options.system` names can't be read.
+        SuiteError: the system prompt `options.system` names can't be read.
         ProviderError: the run couldn't start, so nothing was kept.
     """
-    options = options or RunOptions()
-    suite = prepare_suite(suite, options)
-    plan = await plan_run(suite, providers, options)
-    folder = start_run(suite, providers, out=out, options=options)
-    return await complete_run(plan, folder)
+    plan = await plan_run(suite, providers, options or RunOptions())
+    return await complete_run(plan, start_run(plan, out=out))
 
 
 async def resume_run(path: Path, providers: Providers | None = None) -> Run:
@@ -106,36 +96,35 @@ async def _resume(suite: Suite, providers: Providers, folder: RunFolder) -> Run:
     return await complete_run(plan, folder)
 
 
-def start_run(
-    suite: Suite,
-    providers: Providers,
-    *,
-    out: Path,
-    options: RunOptions | None = None,
-) -> RunFolder:
-    """Make a fresh run's folder under `out`, with its manifest.
+def start_run(plan: Plan, *, out: Path) -> RunFolder:
+    """Make a fresh run's folder under `out`, with the manifest of the run `plan` describes.
 
-    `plan_run` comes first, so a run that can't start never leaves a folder behind.
+    It takes the plan, not a suite, so the folder can only ever describe the
+    suite the run answers. `plan_run` comes first, so a run that can't start
+    never leaves a folder behind.
     """
-    return RunFolder.start(out, manifest_for(suite, providers, options or RunOptions()))
+    return RunFolder.start(out, manifest_for(plan.suite, plan.providers, plan.options))
 
 
 def reopen_run(path: Path) -> tuple[Suite, RunFolder]:
-    """A kept run and its suite, read back so the run can be picked up.
+    """A kept run and its suite as its file says it, read back so the run can be picked up.
 
-    Nothing is written: the folder's `resume` notes the resumption once the
-    run is ready to go on.
+    The check that nothing has changed is made on the suite as the run
+    answered it, its system prompt swapped in, and planning swaps it in
+    again. Nothing is written: the folder's `resume` notes the resumption
+    once the run is ready to go on.
 
     Raises:
         RunError: the folder isn't a run, the suite wasn't loaded from a file,
             or that file, or the system prompt the run used, has changed since.
-        SuiteError: the suite file no longer loads.
+        SuiteError: the suite file no longer loads, or the prompt can't be read.
     """
     folder = RunFolder.open(path)
     if folder.manifest.suite_path is None:
         raise RunError("this run's suite wasn't loaded from a file, so it can't be resumed")
-    suite = prepare_suite(load_suite(folder.manifest.suite_path), folder.manifest.options)
-    if fingerprint(suite) != folder.manifest.fingerprint:
+    suite = load_suite(folder.manifest.suite_path)
+    answered = swap_system_prompt(suite, folder.manifest.options.system)
+    if fingerprint(answered) != folder.manifest.fingerprint:
         raise RunError(f"the suite has changed since run {folder.manifest.run_id} started")
     return suite, folder
 

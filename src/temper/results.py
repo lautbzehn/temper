@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Self
+from typing import TYPE_CHECKING, Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 
 from temper import jsonl
 from temper.errors import BadLineError, RunError, UnreadableFileError
@@ -33,6 +33,14 @@ if TYPE_CHECKING:
 FailureKind = Literal["timeout", "provider", "served-model", "budget"]
 
 
+def _absolute(path: Path) -> Path:
+    return path.resolve()
+
+
+# A file a run reads, held as an absolute path so the run can be resumed from anywhere.
+RunFile = Annotated[Path, AfterValidator(_absolute)]
+
+
 class RunOptions(Closed):
     """How a run is driven: how many trials, how many at once, what it may not exceed.
 
@@ -46,8 +54,8 @@ class RunOptions(Closed):
     attempts: Count = 4
     budget_usd: float | None = Field(default=None, gt=0)
     backoff_s: float = Field(default=1.0, gt=0)
-    replay: Path | None = None
-    system: Path | None = None
+    replay: RunFile | None = None
+    system: RunFile | None = None
 
 
 class Retry(BaseModel):

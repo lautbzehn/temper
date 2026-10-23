@@ -18,6 +18,7 @@ from anthropic import AsyncAnthropic, DefaultAsyncHttpxClient
 from temper.graders import Answer
 from temper.planning import Estimates, Plan, Providers
 from temper.providers import Completion, Request, Usage
+from temper.results import RunOptions
 from temper.runner import run_suite
 from temper.suite import Message, Suite
 
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
     from temper.providers import Provider, Status
-    from temper.results import Run, RunOptions
+    from temper.results import Run
 
 EXAMPLE = Path(__file__).parents[1] / "examples" / "dunder-mifflin" / "suite.yaml"
 
@@ -109,9 +110,14 @@ def providers(answers: Provider | Providers, judge: Provider | None = None) -> P
     return Providers(answers, judge)
 
 
-def plan(suite: Suite, answers: Provider | Providers, judge: Provider | None = None) -> Plan:
+def plan(
+    suite: Suite,
+    answers: Provider | Providers,
+    judge: Provider | None = None,
+    options: RunOptions | None = None,
+) -> Plan:
     """A plan with nothing counted and no budget held."""
-    return Plan(suite, providers(answers, judge), Estimates(), None)
+    return Plan(suite, providers(answers, judge), options or RunOptions(), Estimates(), None)
 
 
 def run(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -11,7 +12,7 @@ from hypothesis import strategies as st
 
 from temper.errors import ProviderError, RunError, TransientError
 from temper.loading import load_suite
-from temper.planning import Providers
+from temper.planning import Providers, plan_run
 from temper.pricing import cost_usd
 from temper.providers import (
     Completion,
@@ -34,8 +35,6 @@ from temper.runner import (
 from tests.support import Scripted, Slow, Stuck, answer, case, make_suite, plan, run
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from tests.support import Files
 
 QUICK = RunOptions(backoff_s=0.001)
@@ -318,9 +317,10 @@ def test_an_interrupted_run_resumes_to_what_a_straight_run_would_have_been(
             return await super().complete(request)
 
     cut = PowerCut({name: [answer()] * 2 for name in "abc"})
-    folder = start_run(suite, Providers(cut), out=out, options=RunOptions(concurrency=1))
+    planned = plan(suite, cut, options=RunOptions(concurrency=1))
+    folder = start_run(planned, out=out)
     with pytest.raises(ExceptionGroup):
-        asyncio.run(complete_run(plan(suite, cut), folder))
+        asyncio.run(complete_run(planned, folder))
     assert len(folder.answered) == 2
     assert folder.manifest.finished_at is None
 
@@ -350,8 +350,9 @@ def test_resuming_answers_only_the_trials_that_failed(files: Files) -> None:
     )
     suite = load_suite(path)
     first = Scripted({"a": [answer(), ProviderError("hiccup"), answer()]})
-    folder = start_run(suite, Providers(first), out=files.root / "runs")
-    asyncio.run(complete_run(plan(suite, first), folder))
+    planned = plan(suite, first)
+    folder = start_run(planned, out=files.root / "runs")
+    asyncio.run(complete_run(planned, folder))
 
     second = Scripted({"a": [answer("yes again")]})
     resumed = asyncio.run(resume_run(folder.path, Providers(second)))
@@ -376,8 +377,9 @@ def test_resume_run_builds_its_own_provider_from_the_run_when_given_none(files: 
     )
     suite = load_suite(path)
     first = Scripted({"a": [answer(), ProviderError("hiccup")]})
-    folder = start_run(suite, Providers(first), out=files.root / "runs")
-    asyncio.run(complete_run(plan(suite, first), folder))
+    planned = plan(suite, first)
+    folder = start_run(planned, out=files.root / "runs")
+    asyncio.run(complete_run(planned, folder))
 
     resumed = asyncio.run(resume_run(folder.path))
 
@@ -397,9 +399,7 @@ def test_a_run_whose_suite_changed_cannot_be_resumed(files: Files) -> None:
           - {id: a, input: Hi, checks: [{type: contains, text: "yes"}]}
         """,
     )
-    folder = start_run(
-        load_suite(path), Providers(Scripted({"a": [answer()]})), out=files.root / "runs"
-    )
+    folder = start_run(plan(load_suite(path), Scripted({"a": [answer()]})), out=files.root / "runs")
     path.write_text(path.read_text().replace("input: Hi", "input: Hello"), encoding="utf-8")
 
     with pytest.raises(RunError, match="the suite has changed since run"):
@@ -407,7 +407,7 @@ def test_a_run_whose_suite_changed_cannot_be_resumed(files: Files) -> None:
 
 
 def test_a_run_of_a_suite_built_in_code_cannot_be_resumed(tmp_path: Path) -> None:
-    folder = start_run(make_suite(case("a")), Providers(Scripted({"a": [answer()]})), out=tmp_path)
+    folder = start_run(plan(make_suite(case("a")), Scripted({"a": [answer()]})), out=tmp_path)
 
     with pytest.raises(RunError, match="wasn't loaded from a file"):
         reopen_run(folder.path)
@@ -448,8 +448,9 @@ def test_a_cancelled_run_keeps_what_it_had_and_resumes_cleanly(files: Files) -> 
 
     async def interrupted() -> RunFolder:
         provider = HalfStuck()
-        folder = start_run(suite, Providers(provider), out=files.root / "runs")
-        running = asyncio.create_task(complete_run(plan(suite, provider), folder))
+        planned = plan(suite, provider)
+        folder = start_run(planned, out=files.root / "runs")
+        running = asyncio.create_task(complete_run(planned, folder))
         await provider.asked.wait()
         running.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -496,3 +497,39 @@ def test_run_suite_answers_with_the_system_prompt_its_options_name(files: Files)
     [asked] = answers.requests
     assert asked.system == "Be thorough.\n"
     assert finished.manifest.options.system == prompt
+
+
+def test_every_way_to_start_a_run_answers_with_the_prompt_its_options_name(
+    files: Files, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files.write("own.md", "Be brief.\n")
+    files.write("other.md", "Be thorough.\n")
+    path = files.write(
+        "suite.yaml",
+        """
+        schema: 1
+        name: prompted
+        target: {provider: fake, model: fake-1, system_file: own.md, options: {replies: x.yaml}}
+        cases:
+          - {id: a, input: Hi, checks: [{type: contains, text: "yes"}]}
+        """,
+    )
+    files.write("x.yaml", "a: 'yes'\n")
+    monkeypatch.chdir(files.root)
+    options = RunOptions(system=Path("other.md"))
+    answers = Scripted({"a": [answer()]})
+
+    async def by_hand() -> RunFolder:
+        planned = await plan_run(load_suite(path), Providers(answers), options)
+        folder = start_run(planned, out=files.root / "runs")
+        await complete_run(planned, folder)
+        return folder
+
+    folder = asyncio.run(by_hand())
+    suite, reopened = reopen_run(folder.path)
+
+    [asked] = answers.requests
+    assert asked.system == "Be thorough.\n"
+    assert folder.manifest.options.system == files.root / "other.md"
+    assert suite.target.system == "Be brief.\n"
+    assert reopened.manifest.fingerprint == folder.manifest.fingerprint

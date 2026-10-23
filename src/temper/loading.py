@@ -108,6 +108,24 @@ def load_suite(path: str | PathLike[str]) -> Suite:
     return suite if system is None else suite.with_system(system)
 
 
+def swap_system_prompt(suite: Suite, prompt: Path | None) -> Suite:
+    """The suite answered with the system prompt in `prompt`, read now and held inline.
+
+    Planning passes every run through here, so a run that names another
+    prompt answers with it on every path. With no prompt, the suite as it is.
+
+    Raises:
+        SuiteError: the prompt file can't be read.
+    """
+    if prompt is None:
+        return suite
+    try:
+        return suite.with_system(read_text(prompt))
+    except UnreadableFileError as error:
+        problem = Problem("", f"can't read the system prompt: {error.reason}")
+        raise SuiteError(prompt, [problem]) from None
+
+
 def _parse(path: Path) -> _Document:
     """Read and parse the file once, keeping where each location in it starts."""
     try:

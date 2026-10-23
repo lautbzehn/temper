@@ -12,13 +12,14 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import typer
 from rich.console import Console
 
-from temper import __version__, calibration, comparison, demo
+from temper import __version__, calibration, comparison
+from temper.demo import replay as replay_story
 from temper.doctor import examine
 from temper.errors import PluginError, ProviderError, RunError, SuiteError
 from temper.labeling import label_run
 from temper.labels import Labels
 from temper.loading import load_suite
-from temper.planning import estimate_suite, plan_run, prepare_suite, providers_for
+from temper.planning import estimate_suite, plan_run, providers_for
 from temper.results import RunFolder, RunOptions
 from temper.runner import complete_run, reopen_run, start_run
 from temper.scorecard import build_scorecard
@@ -133,19 +134,19 @@ def run(
         time_limit_s=time_limit,
         attempts=attempts,
         budget_usd=budget,
-        replay=replay.resolve() if replay else None,
-        system=system.resolve() if system else None,
+        replay=replay,
+        system=system,
     )
     with _plain_errors():
-        loaded = prepare_suite(load_suite(suite), options)
+        loaded = load_suite(suite)
         providers = providers_for(loaded, options)
     if dry_run:
         _estimate(loaded, providers, options)
         return
 
-    def fresh() -> RunFolder:
+    def fresh(plan: Plan) -> RunFolder:
         _prepare(out_dir)
-        return start_run(loaded, providers, out=out_dir, options=options)
+        return start_run(plan, out=out_dir)
 
     _drive(
         loaded, providers, options, fresh, before="run stopped before it began, so nothing was kept"
@@ -159,7 +160,7 @@ def resume(folder: RunDir) -> None:
         loaded, opened = reopen_run(folder)
         providers = providers_for(loaded, opened.manifest.options)
 
-    def picked_up() -> RunFolder:
+    def picked_up(_plan: Plan) -> RunFolder:
         opened.resume()
         return opened
 
@@ -257,8 +258,8 @@ def scorecard(
     out.print(f"Wrote {target}", markup=False)
 
 
-@app.command(name="demo")
-def show_demo(
+@app.command()
+def demo(
     *,
     out_file: Annotated[
         Path, typer.Option("--out", help="Where to write the story's scorecard.")
@@ -270,7 +271,7 @@ def show_demo(
     the same 40 questions five times. The comparison says whether to ship.
     """
     with _plain_errors(), tempfile.TemporaryDirectory() as scratch:
-        story = asyncio.run(demo.replay(Path(scratch)))
+        story = asyncio.run(replay_story(Path(scratch)))
     render_comparison(story.comparison, out)
     _write_page(out_file, build_scorecard(story.candidate, story.baseline))
     out.print()
@@ -345,7 +346,7 @@ def _drive(
     suite: Suite,
     providers: Providers,
     options: RunOptions,
-    folder_once_planned: Callable[[], RunFolder],
+    folder_once_planned: Callable[[Plan], RunFolder],
     *,
     before: str,
 ) -> None:
@@ -360,12 +361,14 @@ def _drive(
         nonlocal folder
         async with aclosing(providers):
             plan = await plan_run(suite, providers, options)
-            folder = folder_once_planned()
+            folder = folder_once_planned(plan)
             out.print(f"Keeping this run in {folder.path}", style="dim")
             return await complete_run(plan, folder)
 
     try:
         finished = asyncio.run(driven())
+    except SuiteError as error:
+        _fail(*error.lines())
     except ProviderError as error:
         _fail(f"{before}: {error}")
     except KeyboardInterrupt:
