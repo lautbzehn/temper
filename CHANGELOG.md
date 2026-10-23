@@ -2,6 +2,22 @@
 
 All notable changes to Temper. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] · 10.23.2026
+
+Decisions, not dashboards: every number comes with how sure it is, and two runs end in a call.
+
+### Added
+
+- Every pass rate has its 95% interval, a Wilson score interval, shown per case and for the run. A run states its noise floor, the biggest difference two runs of the same thing could show by chance at its size, and names its flaky cases, the ones whose trials disagreed.
+- `temper compare BASELINE CANDIDATE`: each case set against its twin with Newcombe's interval on the change, the overall change against the noise, and a verdict. Hold when anything got worse beyond noise, overall or on a single case; ship otherwise, with the trials per case that would settle an undecided change. `--fail-on-regression` exits 1 on a hold, for CI.
+- `temper doctor [SUITE]`: Python, credentials (by source, never shown), each model the suite needs, the runs folder, and an offline run, without spending anything.
+- A run's manifest carries a fingerprint of its cases alone, so runs of one suite with different targets can be compared.
+- A single-file HTML scorecard.
+
+### Changed
+
+- The statistics live in `temper.stats` and the comparison in `temper.comparison`, both closed form and standard library only.
+
 ## [0.3.1] · 10.22.2026
 
 The first real labeling session found that `temper label` cropped the answers it asked about.

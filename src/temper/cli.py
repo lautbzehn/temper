@@ -11,22 +11,29 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import typer
 from rich.console import Console
 
-from temper import __version__, calibration
+from temper import __version__, calibration, comparison
+from temper.doctor import examine
 from temper.errors import PluginError, ProviderError, RunError, SuiteError
 from temper.labeling import label_run
 from temper.labels import Labels
 from temper.loading import load_suite
 from temper.planning import estimate_suite, plan_run, providers_for
-from temper.results import RunOptions
+from temper.results import RunFolder, RunOptions
 from temper.runner import complete_run, reopen_run, start_run
-from temper.summary import render_calibration, render_estimate, render_run
+from temper.summary import (
+    render_calibration,
+    render_comparison,
+    render_estimate,
+    render_findings,
+    render_run,
+)
 from temper.wording import plural
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from temper.planning import Plan, Providers
-    from temper.results import Run, RunFolder
+    from temper.results import Run
     from temper.suite import Suite
 
 app = typer.Typer(
@@ -43,6 +50,8 @@ RunDir = Annotated[Path, typer.Argument(help="A kept run's folder.", show_defaul
 
 INTERRUPTED = 130
 INCOMPLETE = 2
+REGRESSED = 1
+UNWELL = 1
 
 
 def _show_version(*, value: bool) -> None:
@@ -188,6 +197,55 @@ def calibrate(
     if not done:
         _fail(f"no labels to compare with; make some with: temper label {folder}")
     render_calibration(loaded, calibration.calibrate(loaded, opened.run(), done), out)
+
+
+@app.command()
+def compare(
+    baseline: Annotated[
+        Path, typer.Argument(help="The run to compare against.", show_default=False)
+    ],
+    candidate: Annotated[Path, typer.Argument(help="The run that may ship.", show_default=False)],
+    *,
+    fail_on_regression: Annotated[
+        bool,
+        typer.Option(
+            "--fail-on-regression", help="Exit 1 when the candidate is worse beyond noise, for CI."
+        ),
+    ] = False,
+) -> None:
+    """Set a candidate run against a baseline, case by case, and say whether to ship."""
+    with _plain_errors():
+        compared = comparison.compare(
+            RunFolder.open(baseline).run(), RunFolder.open(candidate).run()
+        )
+    render_comparison(compared, out)
+    if fail_on_regression and not compared.ship:
+        raise typer.Exit(REGRESSED)
+
+
+@app.command()
+def doctor(
+    suite: Annotated[
+        Path | None,
+        typer.Argument(
+            help="A suite whose models to probe; Temper's own by default.", show_default=False
+        ),
+    ] = None,
+    *,
+    out_dir: Annotated[Path, typer.Option("--out", help="Where runs are kept.")] = Path("runs"),
+) -> None:
+    """Check the wiring: Python, credentials, the API, the runs folder, and an offline run.
+
+    Nothing is spent: the API is only asked to count tokens. Exits 1 when a check fails.
+    """
+    loaded: Suite | None = None
+    if suite is not None:
+        with _plain_errors():
+            loaded = load_suite(suite)
+    findings = asyncio.run(examine(loaded, out_dir))
+    render_findings(findings, out)
+    if not all(finding.ok for finding in findings):
+        raise typer.Exit(UNWELL)
 
 
 @contextmanager

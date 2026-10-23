@@ -22,6 +22,7 @@ from temper.errors import BadLineError, RunError, UnreadableFileError
 from temper.files import read_text
 from temper.graders import Answer, Grade
 from temper.providers import Completion, Recording, ReplayProvider, Request, Slot, Status
+from temper.stats import Rate
 from temper.suite import Closed, Count
 
 if TYPE_CHECKING:
@@ -140,6 +141,7 @@ class Manifest(BaseModel):
     provider: str
     model: str | None
     judge: str | None = None
+    cases_fingerprint: str | None = None
     charges: bool
     case_ids: tuple[str, ...]
     trials: int
@@ -178,6 +180,25 @@ class Run(BaseModel):
     def trials_passed(self) -> int:
         """How many scored trials passed every check."""
         return sum(result.passed is True for result in self.scored)
+
+    @property
+    def rate(self) -> Rate:
+        """The run's pass rate: its scored trials pooled."""
+        return Rate(self.trials_passed, len(self.scored))
+
+    @property
+    def rates(self) -> dict[str, Rate]:
+        """Each case's pass rate over its scored trials, in suite order."""
+        return {
+            case_id: Rate(sum(result.passed is True for result in scored), len(scored))
+            for case_id, results in self.by_case().items()
+            for scored in [[result for result in results if result.scored]]
+        }
+
+    @property
+    def flaky(self) -> tuple[str, ...]:
+        """The cases whose trials disagreed with each other."""
+        return tuple(case_id for case_id, rate in self.rates.items() if rate.flaky)
 
     @property
     def without_verdict(self) -> int:

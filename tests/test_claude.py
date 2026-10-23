@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx2
 import pytest
@@ -12,6 +12,9 @@ from anthropic import AsyncAnthropic, DefaultAsyncHttpxClient
 from temper.errors import ProviderError, TransientError
 from temper.providers import ClaudeProvider, ClaudeSettings, Completion, Request
 from temper.suite import Message
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 Handler = Callable[[httpx2.Request], httpx2.Response]
 
@@ -281,3 +284,24 @@ def test_a_request_for_json_names_the_shape_in_the_output_config() -> None:
     schema = {"type": "json_schema", "schema": {"type": "object"}}
     assert api.sent[0]["output_config"] == {"effort": "low", "format": schema}
     assert api.sent[1]["output_config"] == {"format": schema}
+
+
+def test_the_provider_names_where_its_credentials_come_from_and_never_what_they_are(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    pretend = "a-made-up-value-the-test-never-sends"
+    keyed = ClaudeProvider(AsyncAnthropic(api_key=pretend), ClaudeSettings())
+    token = ClaudeProvider(AsyncAnthropic(auth_token=pretend), ClaudeSettings())
+    profiled_client = AsyncAnthropic()
+    monkeypatch.setattr(profiled_client, "credentials", object())
+    profiled = ClaudeProvider(profiled_client, ClaudeSettings())
+    bare = ClaudeProvider(AsyncAnthropic(), ClaudeSettings())
+
+    sources = [provider.credentials_source() for provider in (keyed, token, profiled, bare)]
+
+    assert sources == ["an API key", "an auth token", "a profile", None]
+    assert pretend not in str(sources)

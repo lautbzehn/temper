@@ -12,6 +12,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import httpx2
+from anthropic import AsyncAnthropic, DefaultAsyncHttpxClient
+
 from temper.graders import Answer
 from temper.planning import Estimates, Plan, Providers
 from temper.providers import Completion, Request, Usage
@@ -250,3 +253,30 @@ def local_api() -> Iterator[str]:
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def mock_client(**settings: Any) -> AsyncAnthropic:
+    """A client for a pretend API: it greets, or gives a passing verdict when asked for JSON."""
+
+    def api(request: httpx2.Request) -> httpx2.Response:
+        asked = json.loads(request.content)
+        if request.url.path.endswith("count_tokens"):
+            return httpx2.Response(200, json={"input_tokens": 10})
+        shaped = "format" in asked.get("output_config", {})
+        text = '{"reason": "It greets.", "passed": true}' if shaped else "Hello!"
+        return httpx2.Response(
+            200,
+            json={
+                "id": "msg_1",
+                "type": "message",
+                "role": "assistant",
+                "model": asked["model"],
+                "content": [{"type": "text", "text": text}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+        )
+
+    transport = httpx2.MockTransport(api)
+    return AsyncAnthropic(**settings, http_client=DefaultAsyncHttpxClient(transport=transport))

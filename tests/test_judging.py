@@ -368,7 +368,7 @@ def test_the_summary_counts_answers_with_no_verdict_and_the_judges_share(tmp_pat
 
     shown = buffer.getvalue()
     assert "test · fake claude-sonnet-5-5 · judge claude-opus-5-5 · 2 cases × 1 trial" in shown
-    assert "1 of 1 scored trial passed (100%) · 1 with no verdict" in shown
+    assert "1 of 1 scored trial passed (100%," in shown
     assert "trial 1: no verdict: down" in shown
     assert f"spent, {dollars(VERDICT_USD)} of it on the judge" in shown
 

@@ -70,7 +70,10 @@ uv run mypy
 | `src/temper/results.py` | The run folder: `results.jsonl`, `errors.jsonl`, `recording.jsonl`, and `manifest.json` |
 | `src/temper/labels.py`, `labeling.py` | A person's labels on judged answers, and the blind session that collects them |
 | `src/temper/calibration.py` | The judge against the labels: agreement, Cohen's kappa, and every disagreement |
-| `src/temper/summary.py` | The terminal summary, the dry-run estimate, and the calibration report |
+| `src/temper/stats.py` | Wilson intervals, Newcombe's interval on a change, the noise floor, trials to tell a change |
+| `src/temper/comparison.py` | Two runs of the same cases side by side, and the ship-or-hold call |
+| `src/temper/doctor.py` | The check-up: Python, credentials by source, models, the runs folder, an offline run |
+| `src/temper/summary.py` | The terminal summary, the dry-run estimate, the calibration report, the comparison, the check-up |
 | `src/temper/cli.py` | The `temper` command, a thin layer over the library |
 | `src/temper/errors.py` | Every error a person might see |
 | `src/temper/files.py`, `jsonl.py`, `wording.py` | Reading files as UTF-8, records one per line, and the plurals and dollars people read |
