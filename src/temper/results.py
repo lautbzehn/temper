@@ -34,7 +34,11 @@ FailureKind = Literal["timeout", "provider", "served-model", "budget"]
 
 
 class RunOptions(Closed):
-    """How a run is driven: how many trials, how many at once, and what it may not exceed."""
+    """How a run is driven: how many trials, how many at once, what it may not exceed.
+
+    `replay` answers from a recording instead of the suite's provider, and
+    `system` with another system prompt instead of the suite's own.
+    """
 
     trials: Count | None = None
     concurrency: Count = 8
@@ -43,6 +47,7 @@ class RunOptions(Closed):
     budget_usd: float | None = Field(default=None, gt=0)
     backoff_s: float = Field(default=1.0, gt=0)
     replay: Path | None = None
+    system: Path | None = None
 
 
 class Retry(BaseModel):

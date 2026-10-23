@@ -485,3 +485,14 @@ def test_a_live_run_can_be_replayed_without_spending_anything(tmp_path: Path) ->
     assert replayed.cost_usd == pytest.approx(live.cost_usd)
     assert live.manifest.charges
     assert not replayed.manifest.charges
+
+
+def test_run_suite_answers_with_the_system_prompt_its_options_name(files: Files) -> None:
+    prompt = files.write("other.md", "Be thorough.\n")
+    answers = Scripted({"a": [answer()]})
+
+    finished = run(make_suite(case("a")), answers, files.root / "runs", RunOptions(system=prompt))
+
+    [asked] = answers.requests
+    assert asked.system == "Be thorough.\n"
+    assert finished.manifest.options.system == prompt

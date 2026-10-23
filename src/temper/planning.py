@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 
 from temper import judge
 from temper.checks import judge_checks
-from temper.errors import ProviderError
+from temper.errors import ProviderError, RunError, UnreadableFileError
+from temper.files import read_text
 from temper.graders import Answer
 from temper.pricing import cost_usd, price_of
 from temper.providers import (
@@ -56,6 +57,22 @@ class Providers:
         await self.answers.aclose()
         if self.judge is not None:
             await self.judge.aclose()
+
+
+def prepare_suite(suite: Suite, options: RunOptions) -> Suite:
+    """The suite as a run answers it: with the system prompt `options.system` names, if any.
+
+    Raises:
+        RunError: that prompt file can't be read.
+    """
+    if options.system is None:
+        return suite
+    try:
+        return suite.with_system(read_text(options.system))
+    except UnreadableFileError as error:
+        raise RunError(
+            f"can't read the system prompt {str(options.system)!r}: {error.reason}"
+        ) from None
 
 
 def providers_for(suite: Suite, options: RunOptions) -> Providers:

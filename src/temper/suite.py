@@ -159,6 +159,15 @@ class Suite(Closed):
         """Whether any case has a check the judge decides."""
         return any(case.judged for case in self.cases)
 
+    def with_system(self, system: str) -> Suite:
+        """The suite answered with `system` as its system prompt, held inline.
+
+        Inline, so a run never depends on a prompt file again once it has
+        started, and so two prompts can be compared on the very same cases.
+        """
+        target = self.target.model_copy(update={"system": system, "system_file": None})
+        return self.model_copy(update={"target": target})
+
     @model_validator(mode="after")
     def _remember_path(self, info: ValidationInfo) -> Self:
         if isinstance(info.context, dict) and "path" in info.context:

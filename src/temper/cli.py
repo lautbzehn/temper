@@ -17,7 +17,7 @@ from temper.errors import PluginError, ProviderError, RunError, SuiteError
 from temper.labeling import label_run
 from temper.labels import Labels
 from temper.loading import load_suite
-from temper.planning import estimate_suite, plan_run, providers_for
+from temper.planning import estimate_suite, plan_run, prepare_suite, providers_for
 from temper.results import RunFolder, RunOptions
 from temper.runner import complete_run, reopen_run, start_run
 from temper.scorecard import build_scorecard
@@ -108,6 +108,14 @@ def run(
             "holds are replayed too; any it lacks are judged live.",
         ),
     ] = None,
+    system: Annotated[
+        Path | None,
+        typer.Option(
+            "--system",
+            help="Answer with this system prompt instead of the suite's, to compare two "
+            "prompts on the same cases.",
+        ),
+    ] = None,
     out_dir: Annotated[Path, typer.Option("--out", help="Where each run is kept.")] = Path("runs"),
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Say what it would cost; don't run.")
@@ -125,9 +133,10 @@ def run(
         attempts=attempts,
         budget_usd=budget,
         replay=replay.resolve() if replay else None,
+        system=system.resolve() if system else None,
     )
     with _plain_errors():
-        loaded = load_suite(suite)
+        loaded = prepare_suite(load_suite(suite), options)
         providers = providers_for(loaded, options)
     if dry_run:
         _estimate(loaded, providers, options)

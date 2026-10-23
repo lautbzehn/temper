@@ -27,7 +27,14 @@ from temper.checks import build_check
 from temper.errors import ProviderError, RunError, TransientError
 from temper.graders import Answer, Grader
 from temper.loading import load_suite
-from temper.planning import Plan, Providers, answer_request, plan_run, providers_for
+from temper.planning import (
+    Plan,
+    Providers,
+    answer_request,
+    plan_run,
+    prepare_suite,
+    providers_for,
+)
 from temper.pricing import PRICED_ON, cost_usd
 from temper.providers import served_matches
 from temper.results import Manifest, Retry, RunFolder, RunOptions, TrialFailure, TrialResult
@@ -62,9 +69,11 @@ async def run_suite(
     that didn't are in `run.failures`, and `resume_run` can try them again.
 
     Raises:
+        RunError: the system prompt `options.system` names can't be read.
         ProviderError: the run couldn't start, so nothing was kept.
     """
     options = options or RunOptions()
+    suite = prepare_suite(suite, options)
     plan = await plan_run(suite, providers, options)
     folder = start_run(suite, providers, out=out, options=options)
     return await complete_run(plan, folder)
@@ -119,13 +128,13 @@ def reopen_run(path: Path) -> tuple[Suite, RunFolder]:
 
     Raises:
         RunError: the folder isn't a run, the suite wasn't loaded from a file,
-            or that file has changed since the run started.
+            or that file, or the system prompt the run used, has changed since.
         SuiteError: the suite file no longer loads.
     """
     folder = RunFolder.open(path)
     if folder.manifest.suite_path is None:
         raise RunError("this run's suite wasn't loaded from a file, so it can't be resumed")
-    suite = load_suite(folder.manifest.suite_path)
+    suite = prepare_suite(load_suite(folder.manifest.suite_path), folder.manifest.options)
     if fingerprint(suite) != folder.manifest.fingerprint:
         raise RunError(f"the suite has changed since run {folder.manifest.run_id} started")
     return suite, folder
