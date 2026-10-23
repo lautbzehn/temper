@@ -33,7 +33,6 @@ dependencies = [
 Repository = "https://github.com/lautbzehn/temper"
 Changelog = "https://github.com/lautbzehn/temper/blob/main/CHANGELOG.md"
 Issues = "https://github.com/lautbzehn/temper/issues"
-Demo = "https://temper.icarianforge.com"
 
 [project.scripts]
 temper = "temper.cli:app"

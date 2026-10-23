@@ -4,7 +4,7 @@
 
 Teams change prompts and models every week, and most can't say whether a change made things better, worse, or just different. Temper runs a suite of cases against an AI feature, several times each, grades every answer, and keeps an honest record of what happened: a failed call is never written down as a wrong answer, and every run says what it cost. Where code can't decide, a second model judges, and the judge is measured against your own labels before it is believed. Every number comes with how sure it is, and two runs end in a plain-English verdict: ship it, or hold.
 
-> **Status:** version 1.0. The suite format is version 1, and frozen against breaking changes. The [quickstart](https://github.com/lautbzehn/temper/blob/main/docs/quickstart_v1.0_10.23.2026.md) goes from nothing to a ship-or-hold call on your own prompt in five steps.
+> **Status:** version 1.0, in beta while it finds its first users. The suite format is version 1, and frozen against breaking changes. The [quickstart](https://github.com/lautbzehn/temper/blob/main/docs/quickstart_v1.0_10.23.2026.md) goes from nothing to a ship-or-hold call on your own prompt in five steps.
 
 ## Try it
 
@@ -12,11 +12,11 @@ Teams change prompts and models every week, and most can't say whether a change 
 uvx --from temper-evals temper demo
 ```
 
-That replays [the Dunder Mifflin story](#the-dunder-mifflin-story): a support bot answering 40 questions five times with its careful prompt, then with a tidier one that quietly breaks it, and the call on whether to ship. It's a real recording of a real model, so it needs no key, costs nothing, and reaches the same verdict every time.
+That replays [the Dunder Mifflin story](https://github.com/lautbzehn/temper#the-dunder-mifflin-story): a support bot answering 40 questions five times with its careful prompt, then with a tidier one that quietly breaks it, and the call on whether to ship. It's a real recording of a real model, so it needs no key, costs nothing, and reaches the same verdict every time.
 
-To keep it, install it with `uv tool install temper-evals` or `pip install temper-evals`; it needs Python 3.11 or newer. From a clone of this repository, `uv run temper demo` does the same.
+To keep it, install it with `uv tool install temper-evals` or `pip install temper-evals`; it needs Python 3.11 or newer.
 
-The smallest suite to read is the starter one, which runs offline against scripted replies:
+From a clone of this repository, `uv run temper demo` does the same, and the smallest suite to read is the starter one, which runs offline against scripted replies:
 
 ```bash
 uv run temper run examples/dunder-mifflin/suite.yaml
@@ -99,7 +99,7 @@ target:
     effort: low
 ```
 
-Credentials come from the environment (`ANTHROPIC_API_KEY`, or a profile from `ant auth login`), never from a file Temper reads or writes. Then:
+Credentials come from the environment (`ANTHROPIC_API_KEY`), or from a profile that `ant auth login` keeps and the Anthropic SDK reads. Temper itself never reads, writes, or prints a key. Then:
 
 ```bash
 temper run suite.yaml --dry-run                 # what it could cost, at most, without running
@@ -140,7 +140,7 @@ temper run suite.yaml --system support-bot-v2.md
 temper compare runs/<first> runs/<second> --fail-on-regression
 ```
 
-[The Dunder Mifflin story](#the-dunder-mifflin-story) shows the whole report on a real pair of runs.
+[The Dunder Mifflin story](https://github.com/lautbzehn/temper#the-dunder-mifflin-story) shows the whole report on a real pair of runs.
 
 Each case is set against its twin, so a case that broke shows as a regression even when the average hides it. The per-case intervals are widened so that one false alarm among all the cases stays as unlikely as one alone, which is why five trials of a case can show a clean break while three can't. The call is to hold when anything got worse beyond noise, overall or on one case; to make no call when a case has nothing scored in either run, since a candidate that refused everything must not ship on the strength of an empty table; and to ship otherwise. When the overall change is undecided at this size, the report says how many trials per case would settle it. With `--fail-on-regression` the command exits 3 whenever the candidate can't ship, which is the CI gate. Two runs are comparable when their cases are the same; the target may differ, and that's the point, and if the judge differs the report says so.
 
@@ -232,7 +232,7 @@ temper calibrate runs/20261022-091500-3f2a   # agreement, Cohen's kappa, every d
 
 Labeling shows the conversation, the answer, and the property, and never what the judge said. Each label names the answer it was about and the property as you read it, so labels survive a rewording and are never matched to a different answer. Calibration sets the judge's verdicts against your labels, property by property, and prints each disagreement with the judge's reason. Trust takes 20 labels or more, agreement at 90% or better, and Cohen's kappa at 0.6 or better, so a judge that agrees by always saying yes doesn't earn it. Short of that, reword the property or pick another judge, then run the suite again with `--replay` against the first run's recording: the answers replay for free, the verdicts the recording holds are replayed, and the rest are judged live, so the revised judge is tried on the very same answers, against the same labels.
 
-Temper's own judge was measured this way. Dan West labeled 30 of its answers on a five-question pilot, blind to what the judge said, and the judge agreed on 29: 97%, with a kappa of 0.65. The one split was a property that depended on a policy the judge couldn't see, which is why every judged property in the story states its policy. Kappa is modest because nearly every pilot answer was a good one, so the pilot shows the judge agreeing on good answers more than catching bad ones; the story's nine broken cases are where it caught them.
+Temper's own judge was measured this way. Dan West labeled 30 of its answers on a five-question pilot, blind to what the judge said, and the judge agreed on 29: 97%, with a kappa of 0.65. The [pilot](https://github.com/lautbzehn/temper/tree/main/examples/judge-pilot) ships with its run and his labels, so from a clone `uv run temper calibrate examples/judge-pilot/run` reproduces the number. The one split was a property that depended on a policy the judge couldn't see, which is why every judged property in the story states its policy. Kappa is modest because nearly every pilot answer was a good one, so the pilot shows the judge agreeing on good answers more than catching bad ones; the story's nine broken cases are where it caught them.
 
 ## Write your own check
 

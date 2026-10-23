@@ -19,7 +19,7 @@ uv tool install temper-evals    # or: pipx install temper-evals, or: pip install
 temper --version
 ```
 
-Temper needs Python 3.11 or newer. To call a real model, set `ANTHROPIC_API_KEY` in your environment, or sign in with `ant auth login`. Temper never reads a key from a file and never writes one down.
+Temper needs Python 3.11 or newer. To call a real model, set `ANTHROPIC_API_KEY` in your environment, or sign in with `ant auth login`, whose profile the Anthropic SDK reads. Temper itself never reads, writes, or prints a key.
 
 ```bash
 temper doctor    # checks Python, credentials, the models, and an offline run, and spends nothing
