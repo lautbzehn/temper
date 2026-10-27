@@ -2,6 +2,15 @@
 
 **Test AI features the way you test code, and know when a difference is real.**
 
+<p>
+  <a href="https://pypi.org/project/temper-evals/"><img alt="PyPI" src="https://img.shields.io/pypi/v/temper-evals?style=flat-square&label=PyPI&labelColor=1c1917&color=f97343"></a>
+  <a href="https://pypi.org/project/temper-evals/"><img alt="Python 3.11 and newer" src="https://img.shields.io/pypi/pyversions/temper-evals?style=flat-square&labelColor=1c1917&color=57534e"></a>
+  <a href="https://github.com/lautbzehn/temper/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/lautbzehn/temper/ci.yml?branch=main&style=flat-square&label=CI&labelColor=1c1917"></a>
+  <img alt="Test coverage 100%" src="https://img.shields.io/badge/coverage-100%25-34d399?style=flat-square&labelColor=1c1917">
+  <a href="https://temper.icarianforge.com"><img alt="Live verdict" src="https://img.shields.io/badge/live_verdict-temper.icarianforge.com-f97343?style=flat-square&labelColor=1c1917"></a>
+  <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache_2.0-57534e?style=flat-square&labelColor=1c1917"></a>
+</p>
+
 Teams change prompts and models every week, and most can't say whether a change made things better, worse, or just different. Temper runs a suite of cases against an AI feature, several times each, grades every answer, and keeps an honest record of what happened: a failed call is never written down as a wrong answer, and every run says what it cost. Where code can't decide, a second model judges, and the judge is measured against your own labels before it is believed. Every number comes with how sure it is, and two runs end in a plain-English verdict: ship it, or hold.
 
 > **Status:** version 1.0, in beta while it finds its first users. The suite format is version 1, and frozen against breaking changes. The [quickstart](https://github.com/lautbzehn/temper/blob/main/docs/quickstart_v1.0_10.23.2026.md) goes from nothing to a ship-or-hold call on your own prompt in five steps.
