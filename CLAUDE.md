@@ -4,7 +4,7 @@
 
 Temper exists to show that Dan West writes excellent Python. The code is the product: elegant, neat, worth sharing, and impressive to anyone who reviews it. When a feature and the quality bar disagree, cut the feature.
 
-Owner: Dan West. Repo: `lautbzehn/temper`, private until v1.0. Roadmap: [docs/plan_v2.0_10.21.2026.md](docs/plan_v2.0_10.21.2026.md).
+Owner: Dan West. Repo: `lautbzehn/temper`, private until Dan makes it public at the v1.0 launch. Roadmap: [docs/plan_v2.0_10.21.2026.md](docs/plan_v2.0_10.21.2026.md).
 
 ## The quality bar, on every change
 
@@ -27,7 +27,7 @@ Owner: Dan West. Repo: `lautbzehn/temper`, private until v1.0. Roadmap: [docs/pl
 ## What Dan's commands mean
 
 - **"Change ..."**: branch from the latest `main`, make the change, run the checks, push, and open a pull request. Don't merge yet. Reply with what changed in plain words.
-- **"Ship"**: merge the open pull request with a merge commit. If it finishes a milestone, tag the release (`vX.Y.Z`) and publish it as a GitHub pre-release.
+- **"Ship"**: merge the open pull request with a merge commit. If it finishes a milestone, tag the release (`vX.Y.Z`) and publish it on GitHub: as a pre-release before v1.0, and as a full release from v1.0 on, because PyPI and the demo site publish only on a full release. A release that publishes to PyPI waits for Dan's go, since PyPI can't take a version back.
 - **"Change and ship"**: both, merging only once CI passes.
 
 ## Rules
