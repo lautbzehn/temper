@@ -2,6 +2,12 @@
 
 All notable changes to Temper. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- A [security policy](SECURITY.md): how to report a vulnerability, and the controls that protect credentials, publishing, the judge, the reports, and the supply chain.
+
 ## [1.0.1] · 10.23.2026
 
 The first patch, for what the launch showed.
